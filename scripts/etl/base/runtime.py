@@ -44,15 +44,21 @@ def get_env_config() -> MysqlConfig:
 
 
 def get_mysql_connection(cfg: MysqlConfig) -> pymysql.connections.Connection:
-    return pymysql.connect(
-        host=cfg.host,
-        port=cfg.port,
-        user=cfg.user,
-        password=cfg.password,
-        database=cfg.database,
-        charset="utf8mb4",
-        autocommit=False,
-    )
+    try:
+        return pymysql.connect(
+            host=cfg.host,
+            port=cfg.port,
+            user=cfg.user,
+            password=cfg.password,
+            database=cfg.database,
+            charset="utf8mb4",
+            autocommit=False,
+        )
+    except pymysql.err.OperationalError as exc:
+        raise RuntimeError(
+            "Failed to connect to MySQL. Check MYSQL_HOST/MYSQL_PORT/MYSQL_USER/"
+            "MYSQL_PASSWORD/MYSQL_DB and verify credentials."
+        ) from exc
 
 
 def to_records(df: pd.DataFrame, columns: List[str]) -> List[Tuple]:
