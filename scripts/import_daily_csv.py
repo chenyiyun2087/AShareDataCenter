@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Iterable, List
 
+import numpy as np
 import pandas as pd
 
 from etl.base import runtime
@@ -60,6 +61,7 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def _coerce_types(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    df = df.replace({"nan": None, "NaN": None, "NAN": None})
     df["trade_date"] = pd.to_numeric(df["trade_date"], errors="coerce").astype("Int64")
     df["ts_code"] = df["ts_code"].astype(str).str.strip()
     for col in EXPECTED_COLUMNS:
@@ -67,6 +69,7 @@ def _coerce_types(df: pd.DataFrame) -> pd.DataFrame:
             continue
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.where(pd.notnull(df), None)
+    df = df.replace({np.nan: None})
     return df
 
 
