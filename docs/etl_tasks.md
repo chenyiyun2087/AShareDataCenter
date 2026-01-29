@@ -2,20 +2,22 @@
 
 ## 1. 全量初始化（可配置起始日期）
 
-### 1.1 维表
+### 1.1 base 维表
 - **dim_trade_cal**
   - 拉取 TuShare `trade_cal`，按交易所写入。
   - 幂等写入：`INSERT ... ON DUPLICATE KEY UPDATE`。
 - **dim_stock**
   - 拉取 TuShare `stock_basic`，按 ts_code 主键写入。
 
-### 1.2 日频事实表（按交易日拉取）
-- **dwd_daily**、**dwd_daily_basic**、**dwd_adj_factor**
+### 1.2 ODS 原始入库（按交易日拉取）
+- **ods_daily**、**ods_daily_basic**、**ods_adj_factor**
   - 通过 `dim_trade_cal` 生成交易日序列。
   - 逐 `trade_date` 拉取全市场数据（减少请求数）。
-  - 批量写入（1k~5k 行 / 批），`INSERT ... ON DUPLICATE KEY UPDATE`。
+  - 原始字段尽量保持 TuShare 字段命名以便追溯。
 
-### 1.3 财务指标（按公告期窗口补齐）
+### 1.3 DWD 标准明细
+- **dwd_daily**、**dwd_daily_basic**、**dwd_adj_factor**
+  - 由 ODS 转换，统一字段类型与主键，保证幂等写入。
 - **dwd_fina_indicator**
   - 以公告日/报告期窗口分批拉取。
   - 按 `(ts_code, ann_date, end_date)` 幂等写入。
@@ -51,7 +53,13 @@
 4. **ads_universe_daily**
    - 依赖：`dwd_daily` + `dim_stock`
 
-## 4. 数据质量校验（日志级）
+## 4. Web 控制台
+
+- 支持在页面发起分层 ETL 任务（全量/增量）。
+- 支持配置 Cron 定时任务。
+- 任务执行日志来自 `meta_etl_run_log`，展示开始/结束时间与状态。
+
+## 5. 数据质量校验（日志级）
 
 - 交易日是否缺失（对齐 `dim_trade_cal`）
 - 当日写入股票数异常（与历史均值比较）

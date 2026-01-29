@@ -58,6 +58,74 @@ CREATE TABLE IF NOT EXISTS dim_trade_cal (
   KEY idx_cal_date (cal_date)
 ) ENGINE=InnoDB;
 
+-- ========== ODS 原始表 ==========
+CREATE TABLE IF NOT EXISTS ods_daily (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  open DECIMAL(20,4) NULL,
+  high DECIMAL(20,4) NULL,
+  low DECIMAL(20,4) NULL,
+  close DECIMAL(20,4) NULL,
+  pre_close DECIMAL(20,4) NULL,
+  `change` DECIMAL(20,4) NULL,
+  pct_chg DECIMAL(12,6) NULL,
+  vol DECIMAL(20,4) NULL,
+  amount DECIMAL(20,4) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_daily_basic (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  close DECIMAL(20,4) NULL,
+  turnover_rate DECIMAL(12,6) NULL,
+  turnover_rate_f DECIMAL(12,6) NULL,
+  volume_ratio DECIMAL(12,6) NULL,
+  pe DECIMAL(20,4) NULL,
+  pe_ttm DECIMAL(20,4) NULL,
+  pb DECIMAL(20,4) NULL,
+  ps DECIMAL(20,4) NULL,
+  ps_ttm DECIMAL(20,4) NULL,
+  dv_ratio DECIMAL(12,6) NULL,
+  dv_ttm DECIMAL(12,6) NULL,
+  total_share DECIMAL(20,4) NULL,
+  float_share DECIMAL(20,4) NULL,
+  free_share DECIMAL(20,4) NULL,
+  total_mv DECIMAL(20,4) NULL,
+  circ_mv DECIMAL(20,4) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_adj_factor (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  adj_factor DECIMAL(20,4) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_fina_indicator (
+  ts_code CHAR(9) NOT NULL,
+  ann_date INT NOT NULL,
+  end_date INT NOT NULL,
+  report_type VARCHAR(8) NULL,
+  roe DECIMAL(12,6) NULL,
+  grossprofit_margin DECIMAL(12,6) NULL,
+  debt_to_assets DECIMAL(12,6) NULL,
+  netprofit_margin DECIMAL(12,6) NULL,
+  op_income DECIMAL(20,4) NULL,
+  total_assets DECIMAL(20,4) NULL,
+  total_hldr_eqy DECIMAL(20,4) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (ts_code, ann_date, end_date),
+  KEY idx_ts_ann (ts_code, ann_date)
+) ENGINE=InnoDB;
+
 -- ========== DWD 日频事实表 ==========
 CREATE TABLE IF NOT EXISTS dwd_daily (
   trade_date INT NOT NULL,
