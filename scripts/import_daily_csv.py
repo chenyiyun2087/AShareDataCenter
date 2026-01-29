@@ -9,6 +9,7 @@ import pandas as pd
 
 from etl.base import runtime
 
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "etl.ini"
 
 TABLE_NAME = "ods_daily"
 EXPECTED_COLUMNS = [
@@ -91,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config",
-        default="config/etl.ini",
+        default=str(DEFAULT_CONFIG_PATH),
         help="Path to etl.ini (default: %(default)s).",
     )
     parser.add_argument("--host")
@@ -107,8 +108,12 @@ def main() -> None:
     folder = Path(args.folder)
     if not folder.exists():
         raise SystemExit(f"Folder not found: {folder}")
-    if args.config:
-        runtime.DEFAULT_CONFIG_PATH = str(args.config)
+    config_path = Path(args.config).expanduser()
+    if not config_path.is_absolute():
+        config_path = (Path.cwd() / config_path).resolve()
+    if not config_path.exists():
+        raise SystemExit(f"Config file not found: {config_path}")
+    runtime.DEFAULT_CONFIG_PATH = str(config_path)
     cfg = runtime.get_env_config()
     if any([args.host, args.port, args.user, args.password, args.database]):
         cfg = runtime.MysqlConfig(
