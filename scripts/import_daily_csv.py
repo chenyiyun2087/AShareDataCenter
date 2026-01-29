@@ -7,7 +7,13 @@ from typing import Iterable, List
 
 import pandas as pd
 
-from etl.base.runtime import get_env_config, get_mysql_connection, to_records, upsert_rows
+from etl.base.runtime import (
+    DEFAULT_CONFIG_PATH,
+    get_env_config,
+    get_mysql_connection,
+    to_records,
+    upsert_rows,
+)
 
 
 TABLE_NAME = "ods_daily"
@@ -65,7 +71,14 @@ def load_csv(path: Path) -> List[tuple]:
 
 def import_folder(folder: Path) -> None:
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    try:
+        conn = get_mysql_connection(cfg)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Failed to connect to MySQL. Provide credentials via --host/--port/--user/--password/--database "
+            "or set MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DB, or configure ETL_CONFIG_PATH."
+        ) from exc
+    with conn:
         with conn.cursor() as cursor:
             for csv_file in _iter_csv_files(folder):
                 rows = load_csv(csv_file)
@@ -80,9 +93,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Import daily CSV files into MySQL.")
     parser.add_argument(
         "--folder",
-        default=os.environ.get("DAILY_CSV_FOLDER", "/Users/chenyiyun/Download/daily"),
+        default=os.environ.get("DAILY_CSV_FOLDER", "/Users/chenyiyun/Downloads/daily"),
         help="Folder containing daily CSV files (default: %(default)s).",
     )
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("ETL_CONFIG_PATH", "config/etl.ini"),
+        help="Path to etl.ini (default: %(default)s).",
+    )
+    parser.add_argument("--host", default=os.environ.get("MYSQL_HOST"))
+    parser.add_argument("--port", type=int, default=os.environ.get("MYSQL_PORT"))
+    parser.add_argument("--user", default=os.environ.get("MYSQL_USER"))
+    parser.add_argument("--password", default=os.environ.get("MYSQL_PASSWORD"))
+    parser.add_argument("--database", default=os.environ.get("MYSQL_DB"))
     return parser.parse_args()
 
 
@@ -91,6 +114,18 @@ def main() -> None:
     folder = Path(args.folder)
     if not folder.exists():
         raise SystemExit(f"Folder not found: {folder}")
+    if args.config:
+        os.environ["ETL_CONFIG_PATH"] = str(args.config)
+    overrides = {
+        "MYSQL_HOST": args.host,
+        "MYSQL_PORT": args.port,
+        "MYSQL_USER": args.user,
+        "MYSQL_PASSWORD": args.password,
+        "MYSQL_DB": args.database,
+    }
+    for key, value in overrides.items():
+        if value is not None:
+            os.environ[key] = str(value)
     import_folder(folder)
 
 
