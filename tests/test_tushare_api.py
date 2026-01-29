@@ -1,13 +1,23 @@
 import os
 import unittest
+from configparser import ConfigParser
 
 import tushare as ts
+
+
+def _load_token():
+    token = os.environ.get("TUSHARE_TOKEN")
+    if token:
+        return token
+    parser = ConfigParser()
+    parser.read(os.environ.get("ETL_CONFIG_PATH", "config/etl.ini"))
+    return parser.get("tushare", "token", fallback=None)
 
 
 class TuShareApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        token = os.environ.get("TUSHARE_TOKEN")
+        token = _load_token()
         if not token:
             raise unittest.SkipTest("TUSHARE_TOKEN is not set")
         cls.pro = ts.pro_api(token)

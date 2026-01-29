@@ -24,8 +24,8 @@
 1. 执行 `sql/ddl.sql` 建库与建表。
 2. 安装依赖：`pip install -r requirements.txt`。
 3. 配置数据库与 TuShare Token：
-   - `TUSHARE_TOKEN`（或脚本参数 `--token`）
-   - `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DB`
+   - 环境变量：`TUSHARE_TOKEN`、`MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DB`
+   - 或使用本地配置文件 `config/etl.ini`（从 `config/etl.example.ini` 复制）
 4. 全量初始化：
    ```bash
    python scripts/tushare_etl.py --mode full --start-date 20100101

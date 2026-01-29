@@ -3,13 +3,14 @@ import argparse
 import os
 
 from etl import ads, base, dwd, dws, ods
+from etl.base.runtime import get_tushare_token
 
 DEFAULT_RATE_LIMIT = 500
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="TuShare daily ETL (layered)")
-    parser.add_argument("--token", default=os.environ.get("TUSHARE_TOKEN"))
+    parser.add_argument("--token", default=None)
     parser.add_argument("--mode", choices=["full", "incremental"], default="incremental")
     parser.add_argument("--start-date", type=int, default=20100101)
     parser.add_argument("--fina-start", type=int, default=None)
@@ -27,22 +28,24 @@ def main() -> None:
     args = parse_args()
     layers = [layer.strip() for layer in args.layers.split(",") if layer.strip()]
 
-    if ("base" in layers or "ods" in layers) and not args.token:
+    token = args.token or get_tushare_token()
+
+    if ("base" in layers or "ods" in layers) and not token:
         raise RuntimeError("missing TuShare token: use --token or TUSHARE_TOKEN")
 
     if "base" in layers:
         if args.mode == "full":
-            base.run_full(args.token, args.start_date, args.rate_limit)
+            base.run_full(token, args.start_date, args.rate_limit)
         else:
-            base.run_incremental(args.token, args.start_date, args.rate_limit)
+            base.run_incremental(token, args.start_date, args.rate_limit)
 
     if "ods" in layers:
         if args.mode == "full":
-            ods.run_full(args.token, args.start_date, args.rate_limit)
+            ods.run_full(token, args.start_date, args.rate_limit)
         else:
-            ods.run_incremental(args.token, args.rate_limit)
+            ods.run_incremental(token, args.rate_limit)
         if args.fina_start and args.fina_end:
-            ods.run_fina_incremental(args.token, args.fina_start, args.fina_end, args.rate_limit)
+            ods.run_fina_incremental(token, args.fina_start, args.fina_end, args.rate_limit)
 
     if "dwd" in layers:
         if args.mode == "full":

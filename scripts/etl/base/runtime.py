@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from configparser import ConfigParser
 from typing import Iterable, List, Optional, Tuple
 
 import pandas as pd
 import pymysql
 
 BATCH_SIZE = 2000
+DEFAULT_CONFIG_PATH = os.environ.get("ETL_CONFIG_PATH", "config/etl.ini")
 
 
 @dataclass
@@ -33,14 +35,34 @@ class RateLimiter:
         self.last = time.time()
 
 
+def _load_config() -> ConfigParser:
+    parser = ConfigParser()
+    parser.read(DEFAULT_CONFIG_PATH)
+    return parser
+
+
 def get_env_config() -> MysqlConfig:
+    cfg = _load_config()
+    host = os.environ.get("MYSQL_HOST") or cfg.get("mysql", "host", fallback="127.0.0.1")
+    port = os.environ.get("MYSQL_PORT") or cfg.get("mysql", "port", fallback="3306")
+    user = os.environ.get("MYSQL_USER") or cfg.get("mysql", "user", fallback="root")
+    password = os.environ.get("MYSQL_PASSWORD") or cfg.get("mysql", "password", fallback="")
+    database = os.environ.get("MYSQL_DB") or cfg.get("mysql", "database", fallback="tushare_stock")
     return MysqlConfig(
-        host=os.environ.get("MYSQL_HOST", "127.0.0.1"),
-        port=int(os.environ.get("MYSQL_PORT", "3306")),
-        user=os.environ.get("MYSQL_USER", "root"),
-        password=os.environ.get("MYSQL_PASSWORD", ""),
-        database=os.environ.get("MYSQL_DB", "tushare_stock"),
+        host=host,
+        port=int(port),
+        user=user,
+        password=password,
+        database=database,
     )
+
+
+def get_tushare_token() -> Optional[str]:
+    cfg = _load_config()
+    token = os.environ.get("TUSHARE_TOKEN")
+    if token:
+        return token
+    return cfg.get("tushare", "token", fallback=None)
 
 
 def get_mysql_connection(cfg: MysqlConfig) -> pymysql.connections.Connection:
