@@ -25,6 +25,19 @@ EXPECTED_COLUMNS = [
     "vol",
     "amount",
 ]
+DB_COLUMNS = [
+    "trade_date",
+    "ts_code",
+    "open",
+    "high",
+    "low",
+    "close",
+    "pre_close",
+    "`change`",
+    "pct_chg",
+    "vol",
+    "amount",
+]
 
 
 def _iter_csv_files(root: Path) -> Iterable[Path]:
@@ -86,7 +99,7 @@ def import_folder(folder: Path, cfg: runtime.MysqlConfig) -> None:
                 rows = load_csv(csv_file)
                 if not rows:
                     continue
-                runtime.upsert_rows(cursor, TABLE_NAME, EXPECTED_COLUMNS, rows)
+                runtime.upsert_rows(cursor, TABLE_NAME, DB_COLUMNS, rows)
                 conn.commit()
                 print(f"Imported {len(rows):,} rows from {csv_file.name}")
 
