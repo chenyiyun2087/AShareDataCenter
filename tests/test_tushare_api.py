@@ -19,7 +19,10 @@ class TuShareApiTest(unittest.TestCase):
     def setUpClass(cls):
         token = _load_token()
         if not token:
-            raise unittest.SkipTest("TUSHARE_TOKEN is not set")
+            raise unittest.SkipTest(
+                "TuShare token not set. Provide TUSHARE_TOKEN or set it in config/etl.ini "
+                "(or ETL_CONFIG_PATH)."
+            )
         cls.pro = ts.pro_api(token)
         cls.ts_code = "301251.SZ"
         cls.start_date = "20240101"
