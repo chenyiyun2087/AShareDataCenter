@@ -58,7 +58,9 @@ def _coerce_types(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_csv(path: Path) -> List[tuple]:
-    df = pd.read_csv(path, sep="\t", encoding="utf-8-sig")
+    df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
+    if len(df.columns) == 1:
+        df = pd.read_csv(path, sep=",", encoding="utf-8-sig")
     df = _normalize_columns(df)
     df = _coerce_types(df)
     return runtime.to_records(df, EXPECTED_COLUMNS)
