@@ -70,6 +70,12 @@ def import_folder(folder: Path, cfg: runtime.MysqlConfig) -> None:
     try:
         conn = runtime.get_mysql_connection(cfg)
     except RuntimeError as exc:
+        if "cryptography" in str(exc):
+            raise RuntimeError(
+                "Failed to connect to MySQL because the 'cryptography' package is missing. "
+                "Install it in your venv (pip install cryptography) or switch MySQL auth "
+                "to mysql_native_password."
+            ) from exc
         raise RuntimeError(
             "Failed to connect to MySQL. Provide credentials via --host/--port/--user/--password/--database "
             "or set MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DB, or configure ETL_CONFIG_PATH."
