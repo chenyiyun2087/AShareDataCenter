@@ -100,14 +100,18 @@ def load_ods_daily_basic(cursor, df) -> None:
         "total_mv",
         "circ_mv",
     ]
+    df = df.copy()
     df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_daily_basic", columns, rows)
 
 
 def load_ods_adj_factor(cursor, df) -> None:
     columns = ["trade_date", "ts_code", "adj_factor"]
+    df = df.copy()
     df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_adj_factor", columns, rows)
 
