@@ -144,6 +144,9 @@ def load_ods_fina_indicator(cursor, df) -> None:
         if col not in df.columns:
             df[col] = None
     df = df.copy()
+    for col in ("grossprofit_margin", "netprofit_margin"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.loc[df[col].abs() > 999999.999999, col] = None
     df = df.where(pd.notnull(df), None)
     df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
