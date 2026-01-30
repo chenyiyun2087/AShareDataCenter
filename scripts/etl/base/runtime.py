@@ -56,8 +56,9 @@ class RateLimiter:
 
 def _load_config() -> ConfigParser:
     parser = ConfigParser()
-    print(f"Using ETL config: {DEFAULT_CONFIG_PATH}")
-    parser.read(DEFAULT_CONFIG_PATH)
+    config_path = _resolve_default_config_path()
+    print(f"Using ETL config: {config_path}")
+    parser.read(config_path)
     return parser
 
 
