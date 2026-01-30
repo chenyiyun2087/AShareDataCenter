@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 import tushare as ts
+import pandas as pd
 
 from ..base.runtime import (
     RateLimiter,
@@ -40,15 +41,16 @@ def fetch_adj_factor(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
 def fetch_fina_indicator(
     pro: ts.pro_api,
     limiter: RateLimiter,
+    ts_code: str,
     start_date: int,
     end_date: int,
 ):
     limiter.wait()
-    return pro.fina_indicator(start_date=str(start_date), end_date=str(end_date))
+    return pro.fina_indicator(ts_code=ts_code, start_date=str(start_date), end_date=str(end_date))
 
 
 def load_ods_daily(cursor, df) -> None:
-    columns = [
+    data_columns = [
         "trade_date",
         "ts_code",
         "open",
@@ -61,8 +63,24 @@ def load_ods_daily(cursor, df) -> None:
         "vol",
         "amount",
     ]
-    rows = to_records(df, columns)
-    upsert_rows(cursor, "ods_daily", columns, rows)
+    db_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "`change`",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+    rows = to_records(df, data_columns)
+    upsert_rows(cursor, "ods_daily", db_columns, rows)
 
 
 def load_ods_daily_basic(cursor, df) -> None:
@@ -86,12 +104,18 @@ def load_ods_daily_basic(cursor, df) -> None:
         "total_mv",
         "circ_mv",
     ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_daily_basic", columns, rows)
 
 
 def load_ods_adj_factor(cursor, df) -> None:
     columns = ["trade_date", "ts_code", "adj_factor"]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_adj_factor", columns, rows)
 
@@ -110,6 +134,13 @@ def load_ods_fina_indicator(cursor, df) -> None:
         "total_assets",
         "total_hldr_eqy",
     ]
+    df = df.copy()
+    df.columns = [str(col).strip() for col in df.columns]
+    if "report_type" not in df.columns and "report_type_name" in df.columns:
+        df = df.rename(columns={"report_type_name": "report_type"})
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_fina_indicator", columns, rows)
 
@@ -217,8 +248,16 @@ def run_fina_incremental(
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                df = fetch_fina_indicator(pro, limiter, start_date, end_date)
-                load_ods_fina_indicator(cursor, df)
+                cursor.execute("SELECT ts_code FROM dim_stock ORDER BY ts_code")
+                ts_codes = [row[0] for row in cursor.fetchall()]
+
+            for ts_code in ts_codes:
+                with conn.cursor() as cursor:
+                    df = fetch_fina_indicator(pro, limiter, ts_code, start_date, end_date)
+                    load_ods_fina_indicator(cursor, df)
+                    conn.commit()
+
+            with conn.cursor() as cursor:
                 update_watermark(cursor, "ods_fina_indicator", end_date, "SUCCESS")
                 conn.commit()
 
