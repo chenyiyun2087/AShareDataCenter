@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import time
 from dataclasses import dataclass
 from configparser import ConfigParser
@@ -10,7 +11,25 @@ import pandas as pd
 import pymysql
 
 BATCH_SIZE = 2000
-DEFAULT_CONFIG_PATH = os.environ.get("ETL_CONFIG_PATH", "config/etl.ini")
+
+_DEFAULT_REL_CONFIG = Path("config") / "etl.ini"
+_MODULE_ROOT = Path(__file__).resolve().parents[2]
+_MODULE_DEFAULT_CONFIG = _MODULE_ROOT / _DEFAULT_REL_CONFIG
+
+
+def _resolve_default_config_path() -> str:
+    env_path = os.environ.get("ETL_CONFIG_PATH")
+    if env_path:
+        return env_path
+    cwd_path = Path.cwd() / _DEFAULT_REL_CONFIG
+    if cwd_path.exists():
+        return str(cwd_path)
+    if _MODULE_DEFAULT_CONFIG.exists():
+        return str(_MODULE_DEFAULT_CONFIG)
+    return str(_DEFAULT_REL_CONFIG)
+
+
+DEFAULT_CONFIG_PATH = _resolve_default_config_path()
 
 
 @dataclass
@@ -37,6 +56,7 @@ class RateLimiter:
 
 def _load_config() -> ConfigParser:
     parser = ConfigParser()
+    print(f"Using ETL config: {DEFAULT_CONFIG_PATH}")
     parser.read(DEFAULT_CONFIG_PATH)
     return parser
 
