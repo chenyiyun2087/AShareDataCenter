@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+from pathlib import Path
 
 from etl.ods import run_fina_incremental, run_full, run_incremental
 from etl.base.runtime import get_tushare_token
@@ -14,11 +15,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fina-start", type=int)
     parser.add_argument("--fina-end", type=int)
     parser.add_argument("--rate-limit", type=int, default=500)
+    parser.add_argument("--config", default=None, help="Path to etl.ini")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.config:
+        config_path = Path(args.config).expanduser()
+        if not config_path.is_absolute():
+            config_path = (Path.cwd() / config_path).resolve()
+        if not config_path.exists():
+            raise RuntimeError(f"config file not found: {config_path}")
+        os.environ["ETL_CONFIG_PATH"] = str(config_path)
     token = args.token or get_tushare_token()
     if not token:
         raise RuntimeError("missing TuShare token: use --token or TUSHARE_TOKEN")
