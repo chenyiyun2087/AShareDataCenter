@@ -126,6 +126,155 @@ CREATE TABLE IF NOT EXISTS ods_fina_indicator (
   KEY idx_ts_ann (ts_code, ann_date)
 ) ENGINE=InnoDB;
 
+-- ========== ODS 特色数据 ==========
+CREATE TABLE IF NOT EXISTS ods_margin (
+  trade_date INT NOT NULL,
+  exchange VARCHAR(8) NOT NULL,
+  rzye DECIMAL(20,4) NULL,
+  rzmre DECIMAL(20,4) NULL,
+  rzche DECIMAL(20,4) NULL,
+  rqye DECIMAL(20,4) NULL,
+  rqmre DECIMAL(20,4) NULL,
+  rqyl DECIMAL(20,4) NULL,
+  rzrqye DECIMAL(20,4) NULL,
+  rzrqye_chg DECIMAL(20,4) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, exchange)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_margin_detail (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  rzye DECIMAL(20,4) NULL,
+  rzmre DECIMAL(20,4) NULL,
+  rzche DECIMAL(20,4) NULL,
+  rqye DECIMAL(20,4) NULL,
+  rqmre DECIMAL(20,4) NULL,
+  rqyl DECIMAL(20,4) NULL,
+  rzrqye DECIMAL(20,4) NULL,
+  rzrqye_chg DECIMAL(20,4) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_margin_detail_date (trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_margin_target (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  exchange VARCHAR(8) NULL,
+  is_target TINYINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_moneyflow (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  buy_sm DECIMAL(20,4) NULL,
+  sell_sm DECIMAL(20,4) NULL,
+  buy_md DECIMAL(20,4) NULL,
+  sell_md DECIMAL(20,4) NULL,
+  buy_lg DECIMAL(20,4) NULL,
+  sell_lg DECIMAL(20,4) NULL,
+  buy_elg DECIMAL(20,4) NULL,
+  sell_elg DECIMAL(20,4) NULL,
+  net_mf_vol DECIMAL(20,4) NULL,
+  net_mf_amount DECIMAL(20,4) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_moneyflow_date (trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_moneyflow_ths (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  net_mf_amount DECIMAL(20,4) NULL,
+  net_mf_vol DECIMAL(20,4) NULL,
+  buy_sm_amount DECIMAL(20,4) NULL,
+  sell_sm_amount DECIMAL(20,4) NULL,
+  buy_md_amount DECIMAL(20,4) NULL,
+  sell_md_amount DECIMAL(20,4) NULL,
+  buy_lg_amount DECIMAL(20,4) NULL,
+  sell_lg_amount DECIMAL(20,4) NULL,
+  buy_elg_amount DECIMAL(20,4) NULL,
+  sell_elg_amount DECIMAL(20,4) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_moneyflow_ths_date (trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_cyq_chips (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  avg_cost DECIMAL(20,4) NULL,
+  winner_rate DECIMAL(12,6) NULL,
+  pct90 DECIMAL(12,6) NULL,
+  pct10 DECIMAL(12,6) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_cyq_date (trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_stk_factor (
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL,
+  close DECIMAL(20,4) NULL,
+  pct_chg DECIMAL(12,6) NULL,
+  turnover_rate DECIMAL(12,6) NULL,
+  volume_ratio DECIMAL(12,6) NULL,
+  pe DECIMAL(12,6) NULL,
+  pb DECIMAL(12,6) NULL,
+  ps DECIMAL(12,6) NULL,
+  dv_ratio DECIMAL(12,6) NULL,
+  total_mv DECIMAL(20,4) NULL,
+  circ_mv DECIMAL(20,4) NULL,
+  score DECIMAL(12,6) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_stk_factor_date (trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_margin_raw (
+  api_name VARCHAR(32) NOT NULL,
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL DEFAULT '',
+  exchange VARCHAR(8) NOT NULL DEFAULT '',
+  payload JSON NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (api_name, trade_date, ts_code, exchange),
+  KEY idx_margin_date (trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_moneyflow_raw (
+  api_name VARCHAR(32) NOT NULL,
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL DEFAULT '',
+  payload JSON NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (api_name, trade_date, ts_code),
+  KEY idx_moneyflow_date (trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_cyq_raw (
+  api_name VARCHAR(32) NOT NULL,
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL DEFAULT '',
+  payload JSON NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (api_name, trade_date, ts_code),
+  KEY idx_cyq_date (trade_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ods_tech_score_raw (
+  api_name VARCHAR(32) NOT NULL,
+  trade_date INT NOT NULL,
+  ts_code CHAR(9) NOT NULL DEFAULT '',
+  payload JSON NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (api_name, trade_date, ts_code),
+  KEY idx_tech_date (trade_date)
+) ENGINE=InnoDB;
+
 -- ========== DWD 日频事实表 ==========
 CREATE TABLE IF NOT EXISTS dwd_daily (
   trade_date INT NOT NULL,

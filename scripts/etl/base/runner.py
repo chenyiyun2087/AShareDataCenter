@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 import tushare as ts
+import pandas as pd
 
 from .runtime import (
     RateLimiter,
@@ -38,6 +39,9 @@ def fetch_dim_stock(pro: ts.pro_api, limiter: RateLimiter):
 
 def load_dim_trade_cal(cursor, df) -> None:
     columns = ["exchange", "cal_date", "is_open", "pretrade_date"]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
     upsert_rows(cursor, "dim_trade_cal", columns, rows)
 
