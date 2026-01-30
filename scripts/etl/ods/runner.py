@@ -140,6 +140,9 @@ def load_ods_fina_indicator(cursor, df) -> None:
         df = df.rename(columns={"report_type_name": "report_type"})
     if "report_type" not in df.columns:
         df["report_type"] = None
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
     df = df.copy()
     df = df.where(pd.notnull(df), None)
     df = df.replace({pd.NA: None, float("nan"): None})
