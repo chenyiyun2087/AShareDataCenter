@@ -75,6 +75,9 @@ def load_ods_daily(cursor, df) -> None:
         "vol",
         "amount",
     ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, data_columns)
     upsert_rows(cursor, "ods_daily", db_columns, rows)
 
