@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 import tushare as ts
+import pandas as pd
 
 from ..base.runtime import (
     RateLimiter,
@@ -48,7 +49,7 @@ def fetch_fina_indicator(
 
 
 def load_ods_daily(cursor, df) -> None:
-    columns = [
+    data_columns = [
         "trade_date",
         "ts_code",
         "open",
@@ -61,8 +62,24 @@ def load_ods_daily(cursor, df) -> None:
         "vol",
         "amount",
     ]
-    rows = to_records(df, columns)
-    upsert_rows(cursor, "ods_daily", columns, rows)
+    db_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "`change`",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+    rows = to_records(df, data_columns)
+    upsert_rows(cursor, "ods_daily", db_columns, rows)
 
 
 def load_ods_daily_basic(cursor, df) -> None:
@@ -86,12 +103,18 @@ def load_ods_daily_basic(cursor, df) -> None:
         "total_mv",
         "circ_mv",
     ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_daily_basic", columns, rows)
 
 
 def load_ods_adj_factor(cursor, df) -> None:
     columns = ["trade_date", "ts_code", "adj_factor"]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_adj_factor", columns, rows)
 
