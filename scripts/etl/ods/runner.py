@@ -48,7 +48,7 @@ def fetch_fina_indicator(
 
 
 def load_ods_daily(cursor, df) -> None:
-    columns = [
+    data_columns = [
         "trade_date",
         "ts_code",
         "open",
@@ -61,8 +61,21 @@ def load_ods_daily(cursor, df) -> None:
         "vol",
         "amount",
     ]
-    rows = to_records(df, columns)
-    upsert_rows(cursor, "ods_daily", columns, rows)
+    db_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "`change`",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    rows = to_records(df, data_columns)
+    upsert_rows(cursor, "ods_daily", db_columns, rows)
 
 
 def load_ods_daily_basic(cursor, df) -> None:
