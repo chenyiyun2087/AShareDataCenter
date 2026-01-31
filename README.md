@@ -48,5 +48,12 @@
    ```
 8. Web 控制台：
    ```bash
+   # 先构建前端（在 app/ 目录）
+   cd app
+   npm install
+   npm run build
+   cd ..
+
+   # 再启动 Flask 服务（会托管 app/dist）
    python scripts/run_web.py --host 0.0.0.0 --port 5000
    ```
