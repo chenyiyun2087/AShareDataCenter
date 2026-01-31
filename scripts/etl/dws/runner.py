@@ -22,15 +22,6 @@ def _run_price_adj(cursor, trade_date: int | None = None) -> None:
         update_filter = "WHERE cur.trade_date = %s"
         params.append(trade_date)
     insert_sql = f"""
-    WITH latest_trade AS (
-      SELECT MAX(trade_date) AS base_date
-      FROM dwd_daily
-    ),
-    base_factor AS (
-      SELECT a.ts_code, a.adj_factor AS base_adj
-      FROM dwd_adj_factor a
-      JOIN latest_trade lt ON a.trade_date = lt.base_date
-    )
     INSERT INTO dws_price_adj_daily (
       trade_date,
       ts_code,
@@ -51,7 +42,12 @@ def _run_price_adj(cursor, trade_date: int | None = None) -> None:
     FROM dwd_daily d
     JOIN dwd_adj_factor a
       ON a.trade_date = d.trade_date AND a.ts_code = d.ts_code
-    JOIN base_factor b
+    JOIN (
+      SELECT af.ts_code, af.adj_factor AS base_adj
+      FROM dwd_adj_factor af
+      JOIN (SELECT MAX(trade_date) AS base_date FROM dwd_daily) lt
+        ON af.trade_date = lt.base_date
+    ) b
       ON b.ts_code = d.ts_code
     {filter_sql}
     ON DUPLICATE KEY UPDATE
@@ -66,45 +62,24 @@ def _run_price_adj(cursor, trade_date: int | None = None) -> None:
 
     update_sql = f"""
     UPDATE dws_price_adj_daily cur
-    JOIN dws_price_adj_daily prev_1
-      ON prev_1.ts_code = cur.ts_code
-      AND prev_1.trade_date = (
-        SELECT MAX(t.trade_date)
-        FROM dws_price_adj_daily t
-        WHERE t.ts_code = cur.ts_code AND t.trade_date < cur.trade_date
-      )
-    LEFT JOIN dws_price_adj_daily prev_5
-      ON prev_5.ts_code = cur.ts_code
-      AND prev_5.trade_date = (
-        SELECT MAX(t.trade_date)
-        FROM dws_price_adj_daily t
-        WHERE t.ts_code = cur.ts_code AND t.trade_date < cur.trade_date
-        ORDER BY t.trade_date DESC
-        LIMIT 1 OFFSET 4
-      )
-    LEFT JOIN dws_price_adj_daily prev_20
-      ON prev_20.ts_code = cur.ts_code
-      AND prev_20.trade_date = (
-        SELECT MAX(t.trade_date)
-        FROM dws_price_adj_daily t
-        WHERE t.ts_code = cur.ts_code AND t.trade_date < cur.trade_date
-        ORDER BY t.trade_date DESC
-        LIMIT 1 OFFSET 19
-      )
-    LEFT JOIN dws_price_adj_daily prev_60
-      ON prev_60.ts_code = cur.ts_code
-      AND prev_60.trade_date = (
-        SELECT MAX(t.trade_date)
-        FROM dws_price_adj_daily t
-        WHERE t.ts_code = cur.ts_code AND t.trade_date < cur.trade_date
-        ORDER BY t.trade_date DESC
-        LIMIT 1 OFFSET 59
-      )
+    JOIN (
+      SELECT
+        trade_date,
+        ts_code,
+        qfq_close,
+        LAG(qfq_close, 1) OVER w AS prev_1,
+        LAG(qfq_close, 5) OVER w AS prev_5,
+        LAG(qfq_close, 20) OVER w AS prev_20,
+        LAG(qfq_close, 60) OVER w AS prev_60
+      FROM dws_price_adj_daily
+      WINDOW w AS (PARTITION BY ts_code ORDER BY trade_date)
+    ) hist
+      ON hist.trade_date = cur.trade_date AND hist.ts_code = cur.ts_code
     SET
-      cur.qfq_ret_1 = (cur.qfq_close / prev_1.qfq_close) - 1,
-      cur.qfq_ret_5 = CASE WHEN prev_5.qfq_close IS NULL THEN NULL ELSE (cur.qfq_close / prev_5.qfq_close) - 1 END,
-      cur.qfq_ret_20 = CASE WHEN prev_20.qfq_close IS NULL THEN NULL ELSE (cur.qfq_close / prev_20.qfq_close) - 1 END,
-      cur.qfq_ret_60 = CASE WHEN prev_60.qfq_close IS NULL THEN NULL ELSE (cur.qfq_close / prev_60.qfq_close) - 1 END,
+      cur.qfq_ret_1 = (cur.qfq_close / hist.prev_1) - 1,
+      cur.qfq_ret_5 = CASE WHEN hist.prev_5 IS NULL THEN NULL ELSE (cur.qfq_close / hist.prev_5) - 1 END,
+      cur.qfq_ret_20 = CASE WHEN hist.prev_20 IS NULL THEN NULL ELSE (cur.qfq_close / hist.prev_20) - 1 END,
+      cur.qfq_ret_60 = CASE WHEN hist.prev_60 IS NULL THEN NULL ELSE (cur.qfq_close / hist.prev_60) - 1 END,
       cur.updated_at = CURRENT_TIMESTAMP
     {update_filter};
     """
