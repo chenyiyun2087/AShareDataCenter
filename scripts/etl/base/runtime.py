@@ -124,10 +124,12 @@ def upsert_rows(
     if not rows:
         return
     placeholders = ",".join(["%s"] * len(columns))
-    columns_sql = ",".join(columns)
-    update_sql = ",".join([f"{col}=VALUES({col})" for col in columns])
+    quoted_table = f"`{table.replace('`', '``')}`"
+    quoted_columns = [f"`{col.replace('`', '``')}`" for col in columns]
+    columns_sql = ",".join(quoted_columns)
+    update_sql = ",".join([f"{col}=VALUES({col})" for col in quoted_columns])
     sql = (
-        f"INSERT INTO {table} ({columns_sql}) VALUES ({placeholders}) "
+        f"INSERT INTO {quoted_table} ({columns_sql}) VALUES ({placeholders}) "
         f"ON DUPLICATE KEY UPDATE {update_sql}"
     )
     for batch in chunked(rows, BATCH_SIZE):
