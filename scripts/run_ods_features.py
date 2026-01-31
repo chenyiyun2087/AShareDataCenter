@@ -26,6 +26,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", type=int, required=True)
     parser.add_argument("--token", default=None)
     parser.add_argument("--rate-limit", type=int, default=500)
+    parser.add_argument(
+        "--cyq-rate-limit",
+        type=int,
+        default=180,
+        help="Requests per minute for cyq_chips (default: 180).",
+    )
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument(
         "--apis",
@@ -260,6 +266,7 @@ def main() -> None:
     apis_require_ts_code = {"cyq_chips"}
     cfg = get_env_config()
     limiter = RateLimiter(args.rate_limit)
+    limiter_map = {"cyq_chips": RateLimiter(args.cyq_rate_limit)}
     pro = ts.pro_api(token)
 
     with get_mysql_connection(cfg) as conn:
@@ -288,7 +295,8 @@ def main() -> None:
                 if api_name in apis_require_ts_code:
                     for ts_code in ts_codes:
                         try:
-                            df = fetcher(pro, limiter, trade_date, ts_code)
+                            api_limiter = limiter_map.get(api_name, limiter)
+                            df = fetcher(pro, api_limiter, trade_date, ts_code)
                         except Exception as exc:
                             print(f"Fetch failed for {api_name} on {trade_date} {ts_code}: {exc}")
                             continue
