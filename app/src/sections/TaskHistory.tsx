@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { History, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +12,7 @@ import {
 } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { StatusBadge } from '@/components/StatusBadge';
+import { getJson } from '@/lib/api';
 
 interface TaskRecord {
   id: number;
@@ -22,43 +24,46 @@ interface TaskRecord {
   error?: string;
 }
 
-const taskRecords: TaskRecord[] = [
-  {
-    id: 1,
-    api: 'stk_factor',
-    type: 'incremental',
-    startTime: '2026-01-31 14:30:00',
-    endTime: '2026-01-31 14:32:15',
-    status: 'success',
-  },
-  {
-    id: 2,
-    api: 'stk_daily',
-    type: 'full',
-    startTime: '2026-01-31 14:25:00',
-    endTime: '2026-01-31 14:28:30',
-    status: 'success',
-  },
-  {
-    id: 3,
-    api: 'stk_factor',
-    type: 'incremental',
-    startTime: '2026-01-31 14:20:00',
-    endTime: '-',
-    status: 'running',
-  },
-  {
-    id: 4,
-    api: 'stk_limit',
-    type: 'full',
-    startTime: '2026-01-31 14:15:00',
-    endTime: '2026-01-31 14:15:45',
-    status: 'error',
-    error: 'Connection timeout',
-  },
-];
-
 export function TaskHistory() {
+  const [records, setRecords] = useState<TaskRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const response = await getJson<{ data: Array<{
+          id: number;
+          api: string;
+          type: string;
+          start_time: string | null;
+          end_time: string | null;
+          status: string;
+          error: string | null;
+        }> }>('/api/tasks/history');
+        setRecords(
+          response.data.map((item) => ({
+            id: item.id,
+            api: item.api,
+            type: item.type,
+            startTime: item.start_time || '-',
+            endTime: item.end_time || '-',
+            status:
+              item.status === 'SUCCESS'
+                ? 'success'
+                : item.status === 'FAILED'
+                  ? 'error'
+                  : 'running',
+            error: item.error || undefined,
+          })),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '加载失败';
+        setError(message);
+      }
+    };
+    load();
+  }, []);
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 20 }}
@@ -76,13 +81,13 @@ export function TaskHistory() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Alert variant="destructive" className="border-red-500/30 bg-red-500/10">
-            <AlertCircle className="h-4 w-4 text-red-400" />
-            <AlertTitle className="text-red-400">读取日志失败</AlertTitle>
-            <AlertDescription className="text-red-300/80">
-              Failed to connect to MySQL. Check MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DB and verify credentials.
-            </AlertDescription>
-          </Alert>
+          {error ? (
+            <Alert variant="destructive" className="border-red-500/30 bg-red-500/10">
+              <AlertCircle className="h-4 w-4 text-red-400" />
+              <AlertTitle className="text-red-400">读取日志失败</AlertTitle>
+              <AlertDescription className="text-red-300/80">{error}</AlertDescription>
+            </Alert>
+          ) : null}
           
           <div className="rounded-xl border border-border/50 overflow-hidden">
             <Table>
@@ -98,8 +103,8 @@ export function TaskHistory() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {taskRecords.length > 0 ? (
-                  taskRecords.map((record) => (
+                {records.length > 0 ? (
+                  records.map((record) => (
                     <TableRow key={record.id} className="hover:bg-secondary/30">
                       <TableCell className="font-mono">{record.id}</TableCell>
                       <TableCell className="font-mono text-sky-400">{record.api}</TableCell>
