@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart3, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -5,8 +6,57 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { GradientButton } from '@/components/GradientButton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { postJson } from '@/lib/api';
+
+interface SyncPayload {
+  token: string;
+  config: string;
+  start_date: string;
+  end_date: string;
+  rate_limit: string;
+  cyq_rate_limit: string;
+  apis: string;
+}
 
 export function IndicatorSync() {
+  const today = new Date();
+  const todayString = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(
+    today.getDate(),
+  ).padStart(2, '0')}`;
+  const [form, setForm] = useState<SyncPayload>({
+    token: '',
+    config: 'config/etl.ini',
+    start_date: todayString,
+    end_date: todayString,
+    rate_limit: '500',
+    cyq_rate_limit: '180',
+    apis: 'stk_factor',
+  });
+  const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null,
+  );
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleChange = (key: keyof SyncPayload) => (value: string) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setStatus(null);
+    try {
+      await postJson('/api/ods/features-run', {
+        ...form,
+      });
+      setStatus({ type: 'success', message: '已提交指标同步任务。' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '提交失败';
+      setStatus({ type: 'error', message });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 20 }}
@@ -33,6 +83,8 @@ export function IndicatorSync() {
                 id="token"
                 placeholder="请输入访问令牌"
                 className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20"
+                value={form.token}
+                onChange={(event) => handleChange('token')(event.target.value)}
               />
             </div>
             
@@ -42,7 +94,8 @@ export function IndicatorSync() {
               </Label>
               <Input
                 id="config"
-                defaultValue="config/etl.ini"
+                value={form.config}
+                onChange={(event) => handleChange('config')(event.target.value)}
                 className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono text-sm"
               />
             </div>
@@ -53,7 +106,8 @@ export function IndicatorSync() {
               </Label>
               <Input
                 id="start-date"
-                defaultValue="20260131"
+                value={form.start_date}
+                onChange={(event) => handleChange('start_date')(event.target.value)}
                 className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono"
               />
             </div>
@@ -64,7 +118,8 @@ export function IndicatorSync() {
               </Label>
               <Input
                 id="end-date"
-                defaultValue="20260131"
+                value={form.end_date}
+                onChange={(event) => handleChange('end_date')(event.target.value)}
                 className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono"
               />
             </div>
@@ -76,7 +131,8 @@ export function IndicatorSync() {
               <Input
                 id="rate-limit"
                 type="number"
-                defaultValue="500"
+                value={form.rate_limit}
+                onChange={(event) => handleChange('rate_limit')(event.target.value)}
                 className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20"
               />
             </div>
@@ -88,7 +144,8 @@ export function IndicatorSync() {
               <Input
                 id="cyq-rate-limit"
                 type="number"
-                defaultValue="180"
+                value={form.cyq_rate_limit}
+                onChange={(event) => handleChange('cyq_rate_limit')(event.target.value)}
                 className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20"
               />
             </div>
@@ -99,7 +156,8 @@ export function IndicatorSync() {
               </Label>
               <Input
                 id="apis"
-                defaultValue="stk_factor"
+                value={form.apis}
+                onChange={(event) => handleChange('apis')(event.target.value)}
                 className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono"
               />
             </div>
@@ -120,10 +178,19 @@ export function IndicatorSync() {
               </Tooltip>
             </TooltipProvider>
             
-            <GradientButton variant="primary">
-              同步技术指标
+            <GradientButton variant="primary" onClick={handleSubmit} disabled={submitting}>
+              {submitting ? '提交中...' : '同步技术指标'}
             </GradientButton>
           </div>
+          {status ? (
+            <div
+              className={`mt-4 text-sm ${
+                status.type === 'success' ? 'text-emerald-400' : 'text-red-400'
+              }`}
+            >
+              {status.message}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </motion.section>
