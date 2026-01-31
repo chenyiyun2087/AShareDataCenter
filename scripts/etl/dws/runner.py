@@ -22,15 +22,6 @@ def _run_price_adj(cursor, trade_date: int | None = None) -> None:
         update_filter = "WHERE cur.trade_date = %s"
         params.append(trade_date)
     insert_sql = f"""
-    WITH latest_trade AS (
-      SELECT MAX(trade_date) AS base_date
-      FROM dwd_daily
-    ),
-    base_factor AS (
-      SELECT a.ts_code, a.adj_factor AS base_adj
-      FROM dwd_adj_factor a
-      JOIN latest_trade lt ON a.trade_date = lt.base_date
-    )
     INSERT INTO dws_price_adj_daily (
       trade_date,
       ts_code,
@@ -51,7 +42,12 @@ def _run_price_adj(cursor, trade_date: int | None = None) -> None:
     FROM dwd_daily d
     JOIN dwd_adj_factor a
       ON a.trade_date = d.trade_date AND a.ts_code = d.ts_code
-    JOIN base_factor b
+    JOIN (
+      SELECT af.ts_code, af.adj_factor AS base_adj
+      FROM dwd_adj_factor af
+      JOIN (SELECT MAX(trade_date) AS base_date FROM dwd_daily) lt
+        ON af.trade_date = lt.base_date
+    ) b
       ON b.ts_code = d.ts_code
     {filter_sql}
     ON DUPLICATE KEY UPDATE
