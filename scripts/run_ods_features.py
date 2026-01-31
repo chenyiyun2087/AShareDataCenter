@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import pandas as pd
-import tushare as ts
+import tinyshare as ts
 
 from etl.base.runtime import (
     RateLimiter,
