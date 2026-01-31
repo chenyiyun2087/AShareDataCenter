@@ -9,7 +9,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, make_response, request, send_from_directory
 
 from .. import ads, base, dwd, dws, ods
 from ..base.runtime import get_env_config, get_mysql_connection
@@ -22,6 +22,26 @@ app = Flask(__name__)
 scheduler = BackgroundScheduler()
 if not scheduler.running:
     scheduler.start()
+
+
+@app.before_request
+def handle_preflight():
+    if request.method != "OPTIONS" or not request.path.startswith("/api/"):
+        return None
+    response = make_response("", 204)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
+@app.after_request
+def add_cors_headers(response):
+    if request.path.startswith("/api/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
 
 
 def _run_layer(layer: str, mode: str, params: dict) -> None:

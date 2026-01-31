@@ -57,3 +57,13 @@
    # 再启动 Flask 服务（会托管 app/dist）
    python scripts/run_web.py --host 0.0.0.0 --port 5000
    ```
+
+## 前端开发联调（可选）
+
+如需使用 Vite 开发服务器联调（前端与后端不同端口），可通过环境变量指定后端地址：
+
+```bash
+cd app
+export VITE_API_BASE_URL=http://localhost:5000
+npm run dev
+```
