@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from etl.dws import run_full, run_incremental
+from etl.base.runtime import ensure_watermark, get_env_config, get_mysql_connection, get_watermark
 
 
 def parse_args() -> argparse.Namespace:
@@ -16,6 +17,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user", default=None)
     parser.add_argument("--password", default=None)
     parser.add_argument("--database", default=None)
+    parser.add_argument(
+        "--init-watermark",
+        action="store_true",
+        help="Initialize dws watermark if missing (uses start-date - 1).",
+    )
     return parser.parse_args()
 
 
@@ -38,6 +44,14 @@ def main() -> None:
         os.environ["MYSQL_PASSWORD"] = args.password
     if args.database:
         os.environ["MYSQL_DB"] = args.database
+    if args.init_watermark:
+        cfg = get_env_config()
+        with get_mysql_connection(cfg) as conn:
+            with conn.cursor() as cursor:
+                last_date = get_watermark(cursor, "dws")
+                if last_date is None:
+                    ensure_watermark(cursor, "dws", args.start_date - 1)
+                    conn.commit()
     if args.mode == "full":
         run_full(args.start_date)
     else:
