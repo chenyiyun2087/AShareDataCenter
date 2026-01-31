@@ -195,6 +195,7 @@ def _prepare_rows(api_name: str, df: pd.DataFrame, trade_date: int):
         df["exchange_id"] = ""
     df = df.reindex(columns=columns)
     df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None, "nan": None, "NaN": None})
     return to_records(df, columns), columns
 
 
@@ -227,14 +228,23 @@ def main() -> None:
                 fetcher = api_map.get(api_name)
                 if not fetcher:
                     continue
-                df = fetcher(pro, limiter, trade_date)
+                try:
+                    df = fetcher(pro, limiter, trade_date)
+                except Exception as exc:
+                    print(f"Fetch failed for {api_name} on {trade_date}: {exc}")
+                    continue
                 rows, columns = _prepare_rows(api_name, df, trade_date)
                 if not rows:
                     continue
                 table = _table_for_api(api_name)
-                with conn.cursor() as cursor:
-                    upsert_rows(cursor, table, columns, rows)
-                    conn.commit()
+                try:
+                    with conn.cursor() as cursor:
+                        upsert_rows(cursor, table, columns, rows)
+                        conn.commit()
+                except Exception as exc:
+                    conn.rollback()
+                    print(f"Insert failed for {api_name} on {trade_date}: {exc}")
+                    continue
             print(f"Completed feature APIs for trade_date={trade_date}")
 
 

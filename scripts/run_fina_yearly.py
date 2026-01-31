@@ -5,7 +5,7 @@ import argparse
 import os
 from pathlib import Path
 
-from etl.base.runtime import get_tushare_token
+from etl.base.runtime import get_env_config, get_mysql_connection, get_tushare_token
 from etl.ods import run_fina_incremental
 
 
@@ -16,6 +16,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token", default=None)
     parser.add_argument("--rate-limit", type=int, default=500)
     parser.add_argument("--config", default=None, help="Path to etl.ini")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from watermark in meta_etl_watermark (ods_fina_indicator).",
+    )
     return parser.parse_args()
 
 
@@ -34,7 +39,21 @@ def main() -> None:
     if args.end_year < args.start_year:
         raise SystemExit("end-year must be >= start-year")
 
-    for year in range(args.start_year, args.end_year + 1):
+    start_year = args.start_year
+    if args.resume:
+        cfg = get_env_config()
+        with get_mysql_connection(cfg) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT water_mark FROM meta_etl_watermark WHERE api_name=%s",
+                    ("ods_fina_indicator",),
+                )
+                row = cursor.fetchone()
+        if row and row[0]:
+            water_mark = int(row[0])
+            start_year = max(start_year, int(str(water_mark)[:4]) + 1)
+
+    for year in range(start_year, args.end_year + 1):
         start_date = int(f"{year}0101")
         end_date = int(f"{year}1231")
         print(f"Running fina_indicator for {year}: {start_date} -> {end_date}")
