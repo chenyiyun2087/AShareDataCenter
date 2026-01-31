@@ -17,7 +17,7 @@ from ..base.runtime import get_env_config, get_mysql_connection
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DIST_DIR = ROOT_DIR / "app" / "dist"
 
-app = Flask(__name__, static_folder=str(DIST_DIR), static_url_path="")
+app = Flask(__name__)
 
 scheduler = BackgroundScheduler()
 if not scheduler.running:
@@ -371,4 +371,3 @@ def api_ods_rows():
         )
     except Exception as exc:
         return _json_error(str(exc))
-
