@@ -85,7 +85,15 @@ def _apply_config_args(args: argparse.Namespace) -> None:
 
 
 def _latest_trade_date(cursor) -> Optional[int]:
-    cursor.execute("SELECT MAX(cal_date) FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1")
+    cursor.execute(
+        "SELECT MAX(cal_date) FROM dim_trade_cal "
+        "WHERE exchange='SSE' AND is_open=1 "
+        "AND cal_date <= DATE_FORMAT(CURDATE(), '%Y%m%d')"
+    )
+    row = cursor.fetchone()
+    if row and row[0]:
+        return int(row[0])
+    cursor.execute("SELECT MAX(trade_date) FROM ods_daily")
     row = cursor.fetchone()
     if row and row[0]:
         return int(row[0])
