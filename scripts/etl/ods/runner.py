@@ -149,6 +149,7 @@ def load_ods_fina_indicator(cursor, df) -> None:
         df.loc[df[col].abs() > 999999.999999, col] = None
     df = df.where(pd.notnull(df), None)
     df = df.replace({pd.NA: None, float("nan"): None})
+    df = df[df["ann_date"].notnull() & df["end_date"].notnull() & df["ts_code"].notnull()]
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_fina_indicator", columns, rows)
 
