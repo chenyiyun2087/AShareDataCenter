@@ -12,6 +12,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", type=int, default=20100101)
     parser.add_argument("--fina-start", type=int)
     parser.add_argument("--fina-end", type=int)
+    parser.add_argument(
+        "--only-fina",
+        action="store_true",
+        help="Only run fina incremental task (skip daily dwd tasks).",
+    )
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
@@ -40,6 +45,12 @@ def main() -> None:
         os.environ["MYSQL_PASSWORD"] = args.password
     if args.database:
         os.environ["MYSQL_DB"] = args.database
+    if args.only_fina:
+        if not (args.fina_start and args.fina_end):
+            raise RuntimeError("--only-fina requires --fina-start and --fina-end")
+        run_fina_incremental(args.fina_start, args.fina_end)
+        return
+
     if args.mode == "full":
         run_full(args.start_date)
     else:
