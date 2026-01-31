@@ -258,6 +258,7 @@ CREATE TABLE IF NOT EXISTS ods_stk_factor (
   boll_mid DECIMAL(20,4) NULL,
   boll_lower DECIMAL(20,4) NULL,
   cci DECIMAL(12,6) NULL,
+  score DECIMAL(12,6) NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_stk_factor_date (trade_date)
