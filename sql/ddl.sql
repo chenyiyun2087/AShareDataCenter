@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS ods_margin_target (
   is_new CHAR(1) NULL,
   in_date INT NULL,
   out_date INT NULL,
-  ann_date INT NULL,
+  ann_date INT NOT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (ts_code, mg_type, ann_date)
 ) ENGINE=InnoDB;
@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS ods_stk_factor (
   high DECIMAL(20,4) NULL,
   low DECIMAL(20,4) NULL,
   pre_close DECIMAL(20,4) NULL,
-  change DECIMAL(20,4) NULL,
+  `change` DECIMAL(20,4) NULL,
   pct_change DECIMAL(12,6) NULL,
   vol DECIMAL(20,4) NULL,
   amount DECIMAL(20,4) NULL,
