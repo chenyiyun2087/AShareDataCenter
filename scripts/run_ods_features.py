@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import pandas as pd
-import tinyshare as ts
+import tushare as ts
 
 from etl.base.runtime import (
     RateLimiter,
@@ -287,13 +287,23 @@ def main() -> None:
         if apis_require_ts_code.intersection(apis) and not ts_codes:
             print("No ts_code found in dim_stock; skipping APIs that require ts_code.")
 
-        for trade_date in trade_dates:
-            for api_name in apis:
+        total_dates = len(trade_dates)
+        total_apis = len(apis)
+        total_ts_codes = len(ts_codes) if apis_require_ts_code.intersection(apis) else 0
+        for date_index, trade_date in enumerate(trade_dates, start=1):
+            print(f"Progress: trade_date {date_index}/{total_dates} ({trade_date})")
+            for api_index, api_name in enumerate(apis, start=1):
                 fetcher = api_map.get(api_name)
                 if not fetcher:
                     continue
+                print(f"Progress: api {api_index}/{total_apis} ({api_name}) for {trade_date}")
                 if api_name in apis_require_ts_code:
-                    for ts_code in ts_codes:
+                    for ts_index, ts_code in enumerate(ts_codes, start=1):
+                        if total_ts_codes:
+                            print(
+                                "Progress: ts_code "
+                                f"{ts_index}/{total_ts_codes} ({ts_code}) for {api_name} {trade_date}"
+                            )
                         try:
                             api_limiter = limiter_map.get(api_name, limiter)
                             df = fetcher(pro, api_limiter, trade_date, ts_code)
