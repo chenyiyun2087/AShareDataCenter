@@ -73,7 +73,12 @@ def _fetch_latest_trade_date(cursor) -> int:
         cursor.execute("SELECT MAX(trade_date) FROM dwd_daily")
         row = cursor.fetchone()
     if not row or row[0] is None:
-        raise RuntimeError("no trade_date available; ads_features_stock_daily and dwd_daily are empty.")
+        cursor.execute("SELECT MAX(trade_date) FROM ods_daily")
+        row = cursor.fetchone()
+    if not row or row[0] is None:
+        raise RuntimeError(
+            "no trade_date available; ads_features_stock_daily, dwd_daily, and ods_daily are empty."
+        )
     return int(row[0])
 
 
@@ -127,31 +132,85 @@ def _fetch_features(cursor, trade_date: int, ts_codes: Iterable[str]) -> pd.Data
     )
     cursor.execute(fallback_sql, tuple(params))
     rows = cursor.fetchall()
-    if not rows:
-        cursor.execute("SELECT MAX(trade_date) FROM ads_features_stock_daily")
-        ads_date = cursor.fetchone()[0]
-        cursor.execute("SELECT MAX(trade_date) FROM dwd_daily")
-        dwd_date = cursor.fetchone()[0]
-        cursor.execute("SELECT MAX(trade_date) FROM ods_daily")
-        ods_date = cursor.fetchone()[0]
-        raise RuntimeError(
-            "no feature rows available for trade_date="
-            f"{trade_date}. latest ads={ads_date}, dwd={dwd_date}, ods={ods_date}"
+    if rows:
+        return pd.DataFrame(
+            rows,
+            columns=[
+                "trade_date",
+                "ts_code",
+                "ret_20",
+                "ret_60",
+                "turnover_rate",
+                "pe_ttm",
+                "pb",
+                "roe",
+                "grossprofit_margin",
+                "debt_to_assets",
+            ],
         )
-    return pd.DataFrame(
-        rows,
-        columns=[
-            "trade_date",
-            "ts_code",
-            "ret_20",
-            "ret_60",
-            "turnover_rate",
-            "pe_ttm",
-            "pb",
-            "roe",
-            "grossprofit_margin",
-            "debt_to_assets",
-        ],
+    ods_sql = (
+        "SELECT base.trade_date, base.ts_code, "
+        "base.ret_20, base.ret_60, "
+        "b.turnover_rate, b.pe_ttm, b.pb, "
+        "f.roe, f.grossprofit_margin, f.debt_to_assets "
+        "FROM ("
+        "  SELECT "
+        "    trade_date, "
+        "    ts_code, "
+        "    CASE "
+        "      WHEN LAG(close, 20) OVER (PARTITION BY ts_code ORDER BY trade_date) IS NULL "
+        "        THEN NULL "
+        "      ELSE (close / LAG(close, 20) OVER (PARTITION BY ts_code ORDER BY trade_date)) - 1 "
+        "    END AS ret_20, "
+        "    CASE "
+        "      WHEN LAG(close, 60) OVER (PARTITION BY ts_code ORDER BY trade_date) IS NULL "
+        "        THEN NULL "
+        "      ELSE (close / LAG(close, 60) OVER (PARTITION BY ts_code ORDER BY trade_date)) - 1 "
+        "    END AS ret_60 "
+        "  FROM ods_daily "
+        f"  WHERE trade_date <= %s{dwd_filter}"
+        ") AS base "
+        "LEFT JOIN ods_daily_basic b "
+        "  ON b.trade_date = base.trade_date AND b.ts_code = base.ts_code "
+        "LEFT JOIN ods_fina_indicator f "
+        "  ON f.ts_code = base.ts_code "
+        "  AND f.ann_date <= base.trade_date "
+        "  AND NOT EXISTS ("
+        "    SELECT 1 FROM ods_fina_indicator f2 "
+        "    WHERE f2.ts_code = f.ts_code "
+        "      AND f2.ann_date <= base.trade_date "
+        "      AND (f2.ann_date > f.ann_date OR (f2.ann_date = f.ann_date AND f2.end_date > f.end_date))"
+        "  ) "
+        "WHERE base.trade_date = %s"
+    )
+    ods_params = params + [trade_date]
+    cursor.execute(ods_sql, tuple(ods_params))
+    rows = cursor.fetchall()
+    if rows:
+        return pd.DataFrame(
+            rows,
+            columns=[
+                "trade_date",
+                "ts_code",
+                "ret_20",
+                "ret_60",
+                "turnover_rate",
+                "pe_ttm",
+                "pb",
+                "roe",
+                "grossprofit_margin",
+                "debt_to_assets",
+            ],
+        )
+    cursor.execute("SELECT MAX(trade_date) FROM ads_features_stock_daily")
+    ads_date = cursor.fetchone()[0]
+    cursor.execute("SELECT MAX(trade_date) FROM dwd_daily")
+    dwd_date = cursor.fetchone()[0]
+    cursor.execute("SELECT MAX(trade_date) FROM ods_daily")
+    ods_date = cursor.fetchone()[0]
+    raise RuntimeError(
+        "no feature rows available for trade_date="
+        f"{trade_date}. latest ads={ads_date}, dwd={dwd_date}, ods={ods_date}"
     )
 
 

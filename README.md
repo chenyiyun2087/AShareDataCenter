@@ -16,6 +16,7 @@
 - `scripts/score_stocks.py`：股票评分脚本（单只/批量）
   - 当 ADS 特征表为空时，自动回退到 DWD/DWS 明细表拼接因子。
   - 可使用 `--fallback-latest` 在指定交易日缺失时自动回退到最新可用交易日。
+  - 当 DWD/DWS 也缺失时，会使用 ODS 数据拼接简化因子用于评分。
 - `scripts/run_web.py`：Web 控制台（手动触发/定时任务/执行日志）
 
 ## 设计要点
