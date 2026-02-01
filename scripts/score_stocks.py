@@ -82,6 +82,25 @@ def _fetch_latest_trade_date(cursor) -> int:
     return int(row[0])
 
 
+def _resolve_ts_codes(cursor, ts_codes: Iterable[str]) -> List[str]:
+    codes = [code.strip() for code in ts_codes if code and code.strip()]
+    resolved: List[str] = []
+    for code in codes:
+        if "." in code:
+            resolved.append(code)
+            continue
+        cursor.execute(
+            "SELECT ts_code FROM dim_stock WHERE ts_code LIKE %s OR ts_code = %s",
+            (f"{code}.%", code),
+        )
+        matches = [row[0] for row in cursor.fetchall()]
+        if matches:
+            resolved.extend(matches)
+        else:
+            resolved.append(code)
+    return sorted(set(resolved))
+
+
 def _fetch_features(cursor, trade_date: int, ts_codes: Iterable[str]) -> pd.DataFrame:
     ts_code_list = list(ts_codes)
     ads_filter = ""
@@ -294,10 +313,10 @@ def _render_results(df: pd.DataFrame, ts_codes: Iterable[str]) -> pd.DataFrame:
 def main() -> None:
     args = parse_args()
     _apply_config_args(args)
-    ts_codes = _load_ts_codes(args)
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
+            ts_codes = _resolve_ts_codes(cursor, _load_ts_codes(args))
             trade_date = args.trade_date or _fetch_latest_trade_date(cursor)
             try:
                 df = _fetch_features(cursor, trade_date, ts_codes)
