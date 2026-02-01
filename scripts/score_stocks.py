@@ -78,17 +78,20 @@ def _fetch_latest_trade_date(cursor) -> int:
 
 
 def _fetch_features(cursor, trade_date: int, ts_codes: Iterable[str]) -> pd.DataFrame:
-    ts_filter = ""
+    ts_code_list = list(ts_codes)
+    ads_filter = ""
+    dwd_filter = ""
     params: List[object] = [trade_date]
     if ts_codes:
-        placeholders = ",".join(["%s"] * len(list(ts_codes)))
-        ts_filter = f" AND ts_code IN ({placeholders})"
-        params.extend(list(ts_codes))
+        placeholders = ",".join(["%s"] * len(ts_code_list))
+        ads_filter = f" AND ts_code IN ({placeholders})"
+        dwd_filter = f" AND d.ts_code IN ({placeholders})"
+        params.extend(ts_code_list)
     ads_sql = (
         "SELECT trade_date, ts_code, ret_20, ret_60, turnover_rate, pe_ttm, pb, "
         "roe, grossprofit_margin, debt_to_assets "
         "FROM ads_features_stock_daily "
-        f"WHERE trade_date = %s{ts_filter}"
+        f"WHERE trade_date = %s{ads_filter}"
     )
     cursor.execute(ads_sql, tuple(params))
     rows = cursor.fetchall()
@@ -120,7 +123,7 @@ def _fetch_features(cursor, trade_date: int, ts_codes: Iterable[str]) -> pd.Data
         "  ON b.trade_date = d.trade_date AND b.ts_code = d.ts_code "
         "LEFT JOIN dws_fina_pit_daily f "
         "  ON f.trade_date = d.trade_date AND f.ts_code = d.ts_code "
-        f"WHERE d.trade_date = %s{ts_filter}"
+        f"WHERE d.trade_date = %s{dwd_filter}"
     )
     cursor.execute(fallback_sql, tuple(params))
     rows = cursor.fetchall()
