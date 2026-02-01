@@ -22,6 +22,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trade-date", type=int, default=None)
     parser.add_argument("--ts-code", action="append", default=[], help="Single stock code.")
     parser.add_argument("--input-file", default=None, help="File with ts_code list (one per line).")
+    parser.add_argument(
+        "--fallback-latest",
+        action="store_true",
+        help="If no rows for trade-date, retry with latest available date from ADS/DWD/ODS.",
+    )
     return parser.parse_args()
 
 
@@ -72,14 +77,20 @@ def _fetch_latest_trade_date(cursor) -> int:
     return int(row[0])
 
 
-def _fetch_features(cursor, trade_date: int) -> pd.DataFrame:
+def _fetch_features(cursor, trade_date: int, ts_codes: Iterable[str]) -> pd.DataFrame:
+    ts_filter = ""
+    params: List[object] = [trade_date]
+    if ts_codes:
+        placeholders = ",".join(["%s"] * len(list(ts_codes)))
+        ts_filter = f" AND ts_code IN ({placeholders})"
+        params.extend(list(ts_codes))
     ads_sql = (
         "SELECT trade_date, ts_code, ret_20, ret_60, turnover_rate, pe_ttm, pb, "
         "roe, grossprofit_margin, debt_to_assets "
         "FROM ads_features_stock_daily "
-        "WHERE trade_date = %s"
+        f"WHERE trade_date = %s{ts_filter}"
     )
-    cursor.execute(ads_sql, (trade_date,))
+    cursor.execute(ads_sql, tuple(params))
     rows = cursor.fetchall()
     if rows:
         return pd.DataFrame(
@@ -109,12 +120,21 @@ def _fetch_features(cursor, trade_date: int) -> pd.DataFrame:
         "  ON b.trade_date = d.trade_date AND b.ts_code = d.ts_code "
         "LEFT JOIN dws_fina_pit_daily f "
         "  ON f.trade_date = d.trade_date AND f.ts_code = d.ts_code "
-        "WHERE d.trade_date = %s"
+        f"WHERE d.trade_date = %s{ts_filter}"
     )
-    cursor.execute(fallback_sql, (trade_date,))
+    cursor.execute(fallback_sql, tuple(params))
     rows = cursor.fetchall()
     if not rows:
-        raise RuntimeError(f"no feature rows available for trade_date={trade_date}")
+        cursor.execute("SELECT MAX(trade_date) FROM ads_features_stock_daily")
+        ads_date = cursor.fetchone()[0]
+        cursor.execute("SELECT MAX(trade_date) FROM dwd_daily")
+        dwd_date = cursor.fetchone()[0]
+        cursor.execute("SELECT MAX(trade_date) FROM ods_daily")
+        ods_date = cursor.fetchone()[0]
+        raise RuntimeError(
+            "no feature rows available for trade_date="
+            f"{trade_date}. latest ads={ads_date}, dwd={dwd_date}, ods={ods_date}"
+        )
     return pd.DataFrame(
         rows,
         columns=[
@@ -211,7 +231,15 @@ def main() -> None:
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
             trade_date = args.trade_date or _fetch_latest_trade_date(cursor)
-            df = _fetch_features(cursor, trade_date)
+            try:
+                df = _fetch_features(cursor, trade_date, ts_codes)
+            except RuntimeError as exc:
+                if not args.fallback_latest:
+                    raise
+                trade_date = _fetch_latest_trade_date(cursor)
+                if args.trade_date and trade_date == args.trade_date:
+                    raise
+                df = _fetch_features(cursor, trade_date, ts_codes)
     scored = _compute_scores(df)
     result = _render_results(scored, ts_codes)
     print(result.to_string(index=False))
