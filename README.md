@@ -5,6 +5,7 @@
 ## 内容概览
 - `sql/ddl.sql`：MySQL 8.0 DDL（维表、DWD/DWS/ADS、元数据表）
 - `sql/transform.sql`：DWS/ADS 计算示例 SQL
+- `sql/preprocess.sql`：ODS 清洗、缺失值填充与极值处理示例 SQL
 - `docs/etl_tasks.md`：全量初始化与每日增量任务清单（含水位、重试、校验）
 - `scripts/tushare_etl.py`：按层级调用的 TuShare 日频 ETL（全量/增量）
 - `scripts/run_base.py`：base 维表任务
@@ -12,6 +13,8 @@
 - `scripts/run_dwd.py`：DWD 标准明细
 - `scripts/run_dws.py`：DWS 主题衍生
 - `scripts/run_ads.py`：ADS 服务层
+- `scripts/score_stocks.py`：股票评分脚本（单只/批量）
+  - 当 ADS 特征表为空时，自动回退到 DWD/DWS 明细表拼接因子。
 - `scripts/run_web.py`：Web 控制台（手动触发/定时任务/执行日志）
 
 ## 设计要点
