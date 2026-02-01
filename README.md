@@ -14,6 +14,7 @@
 - `scripts/run_dws.py`：DWS 主题衍生
 - `scripts/run_ads.py`：ADS 服务层
 - `scripts/score_stocks.py`：股票评分脚本（单只/批量）
+  - 当 ADS 特征表为空时，自动回退到 DWD/DWS 明细表拼接因子。
 - `scripts/run_web.py`：Web 控制台（手动触发/定时任务/执行日志）
 
 ## 设计要点

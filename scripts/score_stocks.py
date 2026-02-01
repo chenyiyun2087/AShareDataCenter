@@ -65,22 +65,57 @@ def _fetch_latest_trade_date(cursor) -> int:
     cursor.execute("SELECT MAX(trade_date) FROM ads_features_stock_daily")
     row = cursor.fetchone()
     if not row or row[0] is None:
-        raise RuntimeError("ads_features_stock_daily is empty; cannot infer trade_date.")
+        cursor.execute("SELECT MAX(trade_date) FROM dwd_daily")
+        row = cursor.fetchone()
+    if not row or row[0] is None:
+        raise RuntimeError("no trade_date available; ads_features_stock_daily and dwd_daily are empty.")
     return int(row[0])
 
 
 def _fetch_features(cursor, trade_date: int) -> pd.DataFrame:
-    sql = (
+    ads_sql = (
         "SELECT trade_date, ts_code, ret_20, ret_60, turnover_rate, pe_ttm, pb, "
         "roe, grossprofit_margin, debt_to_assets "
         "FROM ads_features_stock_daily "
         "WHERE trade_date = %s"
     )
-    cursor.execute(sql, (trade_date,))
+    cursor.execute(ads_sql, (trade_date,))
+    rows = cursor.fetchall()
+    if rows:
+        return pd.DataFrame(
+            rows,
+            columns=[
+                "trade_date",
+                "ts_code",
+                "ret_20",
+                "ret_60",
+                "turnover_rate",
+                "pe_ttm",
+                "pb",
+                "roe",
+                "grossprofit_margin",
+                "debt_to_assets",
+            ],
+        )
+    fallback_sql = (
+        "SELECT d.trade_date, d.ts_code, "
+        "p.qfq_ret_20 AS ret_20, p.qfq_ret_60 AS ret_60, "
+        "b.turnover_rate, b.pe_ttm, b.pb, "
+        "f.roe, f.grossprofit_margin, f.debt_to_assets "
+        "FROM dwd_daily d "
+        "LEFT JOIN dws_price_adj_daily p "
+        "  ON p.trade_date = d.trade_date AND p.ts_code = d.ts_code "
+        "LEFT JOIN dwd_daily_basic b "
+        "  ON b.trade_date = d.trade_date AND b.ts_code = d.ts_code "
+        "LEFT JOIN dws_fina_pit_daily f "
+        "  ON f.trade_date = d.trade_date AND f.ts_code = d.ts_code "
+        "WHERE d.trade_date = %s"
+    )
+    cursor.execute(fallback_sql, (trade_date,))
     rows = cursor.fetchall()
     if not rows:
-        raise RuntimeError(f"no ads_features_stock_daily rows for trade_date={trade_date}")
-    df = pd.DataFrame(
+        raise RuntimeError(f"no feature rows available for trade_date={trade_date}")
+    return pd.DataFrame(
         rows,
         columns=[
             "trade_date",
@@ -95,7 +130,6 @@ def _fetch_features(cursor, trade_date: int) -> pd.DataFrame:
             "debt_to_assets",
         ],
     )
-    return df
 
 
 def _zscore(series: pd.Series) -> pd.Series:
@@ -108,20 +142,33 @@ def _zscore(series: pd.Series) -> pd.Series:
 
 def _compute_scores(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    numeric = df[
+        [
+            "ret_20",
+            "ret_60",
+            "turnover_rate",
+            "pe_ttm",
+            "pb",
+            "roe",
+            "grossprofit_margin",
+            "debt_to_assets",
+        ]
+    ].apply(pd.to_numeric, errors="coerce")
+    df.update(numeric)
     df["earnings_yield"] = df["pe_ttm"].apply(
         lambda value: (1 / value) if value is not None and value > 0 else None
     )
-    df["value_score"] = _zscore(df["earnings_yield"].astype(float))
-    df["value_score"] += _zscore(df["pb"].astype(float) * -1)
+    df["value_score"] = _zscore(df["earnings_yield"])
+    df["value_score"] += _zscore(df["pb"] * -1)
 
-    df["growth_score"] = _zscore(df["roe"].astype(float))
-    df["growth_score"] += _zscore(df["grossprofit_margin"].astype(float))
+    df["growth_score"] = _zscore(df["roe"])
+    df["growth_score"] += _zscore(df["grossprofit_margin"])
 
-    df["momentum_score"] = _zscore(df["ret_20"].astype(float))
-    df["momentum_score"] += _zscore(df["ret_60"].astype(float))
+    df["momentum_score"] = _zscore(df["ret_20"])
+    df["momentum_score"] += _zscore(df["ret_60"])
 
-    df["quality_score"] = _zscore(df["debt_to_assets"].astype(float) * -1)
-    df["quality_score"] += _zscore(df["turnover_rate"].astype(float) * -0.2)
+    df["quality_score"] = _zscore(df["debt_to_assets"] * -1)
+    df["quality_score"] += _zscore(df["turnover_rate"] * -0.2)
 
     weights = {
         "value_score": 0.25,
