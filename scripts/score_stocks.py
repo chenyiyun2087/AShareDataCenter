@@ -148,6 +148,12 @@ def _fetch_features(cursor, trade_date: int, ts_codes: Iterable[str]) -> pd.Data
                 "debt_to_assets",
             ],
         )
+    ods_ts_filter = ""
+    ods_params: List[object] = [trade_date]
+    if ts_code_list:
+        placeholders = ",".join(["%s"] * len(ts_code_list))
+        ods_ts_filter = f" AND ts_code IN ({placeholders})"
+        ods_params.extend(ts_code_list)
     ods_sql = (
         "SELECT base.trade_date, base.ts_code, "
         "base.ret_20, base.ret_60, "
@@ -168,7 +174,7 @@ def _fetch_features(cursor, trade_date: int, ts_codes: Iterable[str]) -> pd.Data
         "      ELSE (close / LAG(close, 60) OVER (PARTITION BY ts_code ORDER BY trade_date)) - 1 "
         "    END AS ret_60 "
         "  FROM ods_daily "
-        f"  WHERE trade_date <= %s{dwd_filter}"
+        f"  WHERE trade_date <= %s{ods_ts_filter}"
         ") AS base "
         "LEFT JOIN ods_daily_basic b "
         "  ON b.trade_date = base.trade_date AND b.ts_code = base.ts_code "
@@ -183,7 +189,7 @@ def _fetch_features(cursor, trade_date: int, ts_codes: Iterable[str]) -> pd.Data
         "  ) "
         "WHERE base.trade_date = %s"
     )
-    ods_params = params + [trade_date]
+    ods_params.append(trade_date)
     cursor.execute(ods_sql, tuple(ods_params))
     rows = cursor.fetchall()
     if rows:
