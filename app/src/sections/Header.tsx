@@ -16,8 +16,8 @@ export function Header() {
             <Database className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-gradient">ETL 控制台</h1>
-            <p className="text-xs text-muted-foreground">数据同步管理系统</p>
+            <h1 className="text-xl font-bold text-gradient">Tushare 数据获取与股票评分中台</h1>
+            <p className="text-xs text-muted-foreground">5000 积分方案 · 2026-02-06</p>
           </div>
         </div>
         
