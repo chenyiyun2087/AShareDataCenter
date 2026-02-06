@@ -7,7 +7,7 @@ from etl.web import app
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ETL Web Server")
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--port", type=int, default=5500)
     parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
 
