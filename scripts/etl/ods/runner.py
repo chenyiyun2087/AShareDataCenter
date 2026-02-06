@@ -71,7 +71,8 @@ def load_ods_daily(cursor, df) -> None:
         "low",
         "close",
         "pre_close",
-        "`change`",
+        # NOTE: `change` is a MySQL keyword; upsert_rows will quote identifiers safely.
+        "change",
         "pct_chg",
         "vol",
         "amount",
