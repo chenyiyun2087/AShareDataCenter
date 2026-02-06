@@ -115,7 +115,26 @@ def run_incremental() -> None:
             with conn.cursor() as cursor:
                 last_date = get_watermark(cursor, "dwd_daily")
                 if last_date is None:
-                    raise RuntimeError("missing watermark for dwd_daily")
+                    cursor.execute("SELECT MAX(trade_date) FROM dwd_daily")
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        last_date = int(row[0])
+                    else:
+                        cursor.execute("SELECT MIN(trade_date) FROM ods_daily")
+                        row = cursor.fetchone()
+                        if not row or row[0] is None:
+                            raise RuntimeError("missing watermark for dwd_daily and ods_daily is empty")
+                        min_trade_date = int(row[0])
+                        cursor.execute(
+                            "SELECT pretrade_date FROM dim_trade_cal WHERE exchange='SSE' AND cal_date=%s",
+                            (min_trade_date,),
+                        )
+                        row = cursor.fetchone()
+                        last_date = int(row[0]) if row and row[0] else min_trade_date - 1
+                    ensure_watermark(cursor, "dwd_daily", last_date)
+                    ensure_watermark(cursor, "dwd_daily_basic", last_date)
+                    ensure_watermark(cursor, "dwd_adj_factor", last_date)
+                    conn.commit()
                 trade_dates = list_trade_dates_after(cursor, last_date)
 
             for trade_date in trade_dates:
