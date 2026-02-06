@@ -1,39 +1,39 @@
 import { StatusCard } from '@/components/StatusCard';
-import { CheckCircle2, Clock, TrendingUp, Zap } from 'lucide-react';
+import { BadgeCheck, Calendar, Gauge, Layers } from 'lucide-react';
 
 export function Dashboard() {
   return (
     <section className="px-6 py-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatusCard
-          title="今日任务"
-          value="24"
-          subtitle="已完成 / 总计 32"
-          icon={CheckCircle2}
+          title="账户等级"
+          value="Tushare 会员"
+          subtitle="5000 积分权限"
+          icon={BadgeCheck}
           status="success"
           delay={0.1}
         />
         <StatusCard
-          title="成功率"
-          value="96.5%"
-          subtitle="过去 7 天平均"
-          icon={TrendingUp}
+          title="请求频次"
+          value="500 次/分钟"
+          subtitle="单次 5000 条"
+          icon={Gauge}
           status="info"
           delay={0.2}
         />
         <StatusCard
-          title="正在运行"
-          value="3"
-          subtitle="活跃任务数"
-          icon={Zap}
+          title="评分体系"
+          value="100 分模型"
+          subtitle="6 大维度权重"
+          icon={Layers}
           status="warning"
           delay={0.3}
         />
         <StatusCard
-          title="最后同步"
-          value="2分钟前"
-          subtitle="2026-01-31 14:32"
-          icon={Clock}
+          title="编制日期"
+          value="2026-02-06"
+          subtitle="方案版本 V1.0"
+          icon={Calendar}
           status="info"
           delay={0.4}
         />

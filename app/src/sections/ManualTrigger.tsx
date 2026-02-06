@@ -1,61 +1,32 @@
-import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Play } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { GradientButton } from '@/components/GradientButton';
-import { postJson } from '@/lib/api';
-
-interface ManualForm {
-  layer: string;
-  mode: string;
-  token: string;
-  start_date: string;
-  fina_start: string;
-  fina_end: string;
-  rate_limit: string;
-}
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 export function ManualTrigger() {
-  const [form, setForm] = useState<ManualForm>({
-    layer: 'base',
-    mode: 'incremental',
-    token: '',
-    start_date: '20100101',
-    fina_start: '',
-    fina_end: '',
-    rate_limit: '500',
-  });
-  const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(
-    null,
-  );
-  const [submitting, setSubmitting] = useState(false);
+  const dimensions = [
+    ['基本面', '40%', 'ROE、净利润增长率、资产负债率'],
+    ['成长性', '20%', '营收/利润 CAGR、毛利率趋势'],
+    ['估值水平', '15%', 'PE/PB/PS 历史分位'],
+    ['市场表现', '10%', '涨跌幅、量价配合、换手率'],
+    ['资金面', '10%', '主力资金、北向资金、融资买入'],
+    ['风险评估', '5%', '股权质押率、股东户数、ST 风险'],
+  ];
 
-  const handleChange = (key: keyof ManualForm) => (value: string) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleSubmit = async () => {
-    setSubmitting(true);
-    setStatus(null);
-    try {
-      await postJson('/api/tasks/run', form);
-      setStatus({ type: 'success', message: '任务已触发。' });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '触发失败';
-      setStatus({ type: 'error', message });
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const fundamentals = [
+    ['ROE', '15', '≥15%'],
+    ['净利润同比增长率', '10', '≥30%'],
+    ['营业收入增长率', '5', '≥20%'],
+    ['资产负债率', '5', '30-60%'],
+    ['经营现金流/净利润', '5', '≥1.2'],
+  ];
 
   return (
     <motion.section
@@ -70,120 +41,62 @@ export function ManualTrigger() {
             <div className="p-2 rounded-lg bg-emerald-500/10">
               <Play className="w-5 h-5 text-emerald-400" />
             </div>
-            <CardTitle className="text-lg font-semibold">手动触发</CardTitle>
+            <CardTitle className="text-lg font-semibold">股票评分体系（总分 100）</CardTitle>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="space-y-2">
-              <Label className="text-sm text-muted-foreground">层级</Label>
-              <Select value={form.layer} onValueChange={handleChange('layer')}>
-                <SelectTrigger className="bg-secondary/50 border-border/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-card border-border/50">
-                  <SelectItem value="base">base</SelectItem>
-                  <SelectItem value="ods">ods</SelectItem>
-                  <SelectItem value="dwd">dwd</SelectItem>
-                  <SelectItem value="dws">dws</SelectItem>
-                  <SelectItem value="ads">ads</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div className="space-y-2">
-              <Label className="text-sm text-muted-foreground">模式</Label>
-              <Select value={form.mode} onValueChange={handleChange('mode')}>
-                <SelectTrigger className="bg-secondary/50 border-border/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-card border-border/50">
-                  <SelectItem value="incremental">incremental</SelectItem>
-                  <SelectItem value="full">full</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="manual-token" className="text-sm text-muted-foreground">
-                Token
-              </Label>
-              <Input
-                id="manual-token"
-                placeholder="请输入访问令牌"
-                className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20"
-                value={form.token}
-                onChange={(event) => handleChange('token')(event.target.value)}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="manual-start" className="text-sm text-muted-foreground">
-                Start Date
-              </Label>
-              <Input
-                id="manual-start"
-                value={form.start_date}
-                onChange={(event) => handleChange('start_date')(event.target.value)}
-                className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono"
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="fina-start" className="text-sm text-muted-foreground">
-                Fina Start
-              </Label>
-              <Input
-                id="fina-start"
-                placeholder="YYYYMMDD"
-                className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono"
-                value={form.fina_start}
-                onChange={(event) => handleChange('fina_start')(event.target.value)}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="fina-end" className="text-sm text-muted-foreground">
-                Fina End
-              </Label>
-              <Input
-                id="fina-end"
-                placeholder="YYYYMMDD"
-                className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono"
-                value={form.fina_end}
-                onChange={(event) => handleChange('fina_end')(event.target.value)}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="manual-rate" className="text-sm text-muted-foreground">
-                Rate Limit
-              </Label>
-              <Input
-                id="manual-rate"
-                type="number"
-                value={form.rate_limit}
-                onChange={(event) => handleChange('rate_limit')(event.target.value)}
-                className="bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20"
-              />
-            </div>
+        <CardContent className="space-y-6">
+          <div className="rounded-xl border border-border/50 overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-secondary/50 hover:bg-secondary/50">
+                  <TableHead className="text-muted-foreground">评分维度</TableHead>
+                  <TableHead className="text-muted-foreground">权重</TableHead>
+                  <TableHead className="text-muted-foreground">关键指标</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {dimensions.map((row) => (
+                  <TableRow key={row[0]} className="hover:bg-secondary/30">
+                    {row.map((cell) => (
+                      <TableCell key={`${row[0]}-${cell}`} className="text-sm">
+                        {cell}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
-          
-          <div className="flex justify-end">
-            <GradientButton variant="success" onClick={handleSubmit} disabled={submitting}>
-              <Play className="w-4 h-4 mr-2" />
-              {submitting ? '运行中...' : '运行任务'}
-            </GradientButton>
-          </div>
-          {status ? (
-            <div
-              className={`mt-4 text-sm ${
-                status.type === 'success' ? 'text-emerald-400' : 'text-red-400'
-              }`}
-            >
-              {status.message}
+
+          <div>
+            <h4 className="text-sm font-medium text-muted-foreground mb-3">基本面评分细则（40 分）</h4>
+            <div className="rounded-xl border border-border/50 overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-secondary/50 hover:bg-secondary/50">
+                    <TableHead className="text-muted-foreground">指标</TableHead>
+                    <TableHead className="text-muted-foreground">权重</TableHead>
+                    <TableHead className="text-muted-foreground">优秀标准</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {fundamentals.map((row) => (
+                    <TableRow key={row[0]} className="hover:bg-secondary/30">
+                      {row.map((cell) => (
+                        <TableCell key={`${row[0]}-${cell}`} className="text-sm">
+                          {cell}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
-          ) : null}
+            <p className="mt-3 text-xs text-muted-foreground">
+              示例：ROE 得分 = min(15, ROE × 15 / 15)；成长性得分 = min(10, 净利润增长率 ×
+              10 / 30)。
+            </p>
+          </div>
         </CardContent>
       </Card>
     </motion.section>
