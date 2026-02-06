@@ -86,6 +86,11 @@ def get_tushare_token() -> Optional[str]:
     return cfg.get("tushare", "token", fallback=None)
 
 
+def get_tushare_limit() -> int:
+    cfg = _load_config()
+    return cfg.getint("tushare", "rate_limit", fallback=500)
+
+
 def get_mysql_connection(cfg: MysqlConfig) -> pymysql.connections.Connection:
     try:
         return pymysql.connect(

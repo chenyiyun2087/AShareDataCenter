@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 
-from etl.base.runtime import get_env_config, get_mysql_connection, get_tushare_token
+from etl.base.runtime import get_env_config, get_mysql_connection, get_tushare_token, get_tushare_limit
 from etl.ods import run_fina_incremental
 
 
@@ -14,7 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-year", type=int, required=True)
     parser.add_argument("--end-year", type=int, required=True)
     parser.add_argument("--token", default=None)
-    parser.add_argument("--rate-limit", type=int, default=500)
+    parser.add_argument("--rate-limit", type=int, default=None)
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument(
         "--resume",
@@ -25,7 +26,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     args = parse_args()
+    logging.info(f"Starting Fina Yearly ETL with args: {args}")
     if args.config:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
@@ -38,6 +41,8 @@ def main() -> None:
         raise RuntimeError("missing TuShare token: use --token or TUSHARE_TOKEN")
     if args.end_year < args.start_year:
         raise SystemExit("end-year must be >= start-year")
+
+    rate_limit = args.rate_limit or get_tushare_limit()
 
     start_year = args.start_year
     if args.resume:
@@ -57,7 +62,9 @@ def main() -> None:
         start_date = int(f"{year}0101")
         end_date = int(f"{year}1231")
         print(f"Running fina_indicator for {year}: {start_date} -> {end_date}")
-        run_fina_incremental(token, start_date, end_date, args.rate_limit)
+        run_fina_incremental(token, start_date, end_date, rate_limit)
+
+    logging.info("Fina Yearly ETL completed successfully")
 
 
 if __name__ == "__main__":

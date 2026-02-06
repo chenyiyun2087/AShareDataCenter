@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -14,6 +15,7 @@ from etl.base.runtime import (
     get_env_config,
     get_mysql_connection,
     get_tushare_token,
+    get_tushare_limit,
     list_trade_dates,
     to_records,
     upsert_rows,
@@ -25,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", type=int, required=True)
     parser.add_argument("--end-date", type=int, required=True)
     parser.add_argument("--token", default=None)
-    parser.add_argument("--rate-limit", type=int, default=500)
+    parser.add_argument("--rate-limit", type=int, default=None)
     parser.add_argument(
         "--cyq-rate-limit",
         type=int,
@@ -35,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument(
         "--apis",
-        default="margin,margin_detail,margin_target,moneyflow,moneyflow_ths,cyq_chips,stk_factor",
+        default="margin,margin_detail,margin_target,moneyflow,moneyflow_ths,cyq_chips,cyq_perf,stk_factor",
         help="Comma-separated API list.",
     )
     return parser.parse_args()
@@ -103,6 +105,19 @@ API_COLUMNS: Dict[str, List[str]] = {
         "sell_elg_amount",
     ],
     "cyq_chips": ["trade_date", "ts_code", "price", "percent"],
+    "cyq_perf": [
+        "trade_date",
+        "ts_code",
+        "his_low",
+        "his_high",
+        "cost_5pct",
+        "cost_15pct",
+        "cost_50pct",
+        "cost_85pct",
+        "cost_95pct",
+        "weight_avg",
+        "winner_rate",
+    ],
     "stk_factor": [
         "trade_date",
         "ts_code",
@@ -188,6 +203,13 @@ def _fetch_cyq_chips(
     return pro.cyq_chips(trade_date=str(trade_date), ts_code=ts_code)
 
 
+def _fetch_cyq_perf(
+    pro: ts.pro_api, limiter: RateLimiter, trade_date: int, ts_code: Optional[str] = None
+) -> pd.DataFrame:
+    limiter.wait()
+    return pro.cyq_perf(trade_date=str(trade_date))
+
+
 def _fetch_stk_factor(
     pro: ts.pro_api, limiter: RateLimiter, trade_date: int, ts_code: Optional[str] = None
 ) -> pd.DataFrame:
@@ -203,6 +225,7 @@ def _table_for_api(api_name: str) -> str:
         "moneyflow": "ods_moneyflow",
         "moneyflow_ths": "ods_moneyflow_ths",
         "cyq_chips": "ods_cyq_chips",
+        "cyq_perf": "ods_cyq_perf",
         "stk_factor": "ods_stk_factor",
     }
     return table_map[api_name]
@@ -242,7 +265,9 @@ def _existing_tables(cursor, schema: str, tables: List[str]) -> set[str]:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     args = parse_args()
+    logging.info(f"Starting ODS Features ETL with args: {args}")
     if args.config:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
@@ -261,11 +286,14 @@ def main() -> None:
         "moneyflow": _fetch_moneyflow,
         "moneyflow_ths": _fetch_moneyflow_ths,
         "cyq_chips": _fetch_cyq_chips,
+        "cyq_perf": _fetch_cyq_perf,
         "stk_factor": _fetch_stk_factor,
     }
     apis_require_ts_code = {"cyq_chips"}
+    apis_require_ts_code = {"cyq_chips"}
     cfg = get_env_config()
-    limiter = RateLimiter(args.rate_limit)
+    rate_limit = args.rate_limit or get_tushare_limit()
+    limiter = RateLimiter(rate_limit)
     limiter_map = {"cyq_chips": RateLimiter(args.cyq_rate_limit)}
     pro = ts.pro_api(token)
 
@@ -341,6 +369,8 @@ def main() -> None:
                         print(f"Insert failed for {api_name} on {trade_date}: {exc}")
                         continue
             print(f"Completed feature APIs for trade_date={trade_date}")
+    
+    logging.info("ODS Features ETL completed successfully")
 
 
 if __name__ == "__main__":

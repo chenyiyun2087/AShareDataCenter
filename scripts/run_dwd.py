@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import logging
 import os
 from pathlib import Path
 
@@ -27,7 +28,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     args = parse_args()
+    logging.info(f"Starting DWD ETL with args: {args}")
     if args.config:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
@@ -58,6 +61,8 @@ def main() -> None:
 
     if args.fina_start and args.fina_end:
         run_fina_incremental(args.fina_start, args.fina_end)
+
+    logging.info("DWD ETL completed successfully")
 
 
 if __name__ == "__main__":
