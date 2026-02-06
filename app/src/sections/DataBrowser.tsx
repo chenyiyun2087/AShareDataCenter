@@ -1,18 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Database, AlertCircle } from 'lucide-react';
+import { Database } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { GradientButton } from '@/components/GradientButton';
 import {
   Table,
   TableBody,
@@ -21,75 +9,69 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { getJson } from '@/lib/api';
 
 export function DataBrowser() {
-  const [tables, setTables] = useState<string[]>([]);
-  const [selectedTable, setSelectedTable] = useState('ods_daily');
-  const [tsCode, setTsCode] = useState('');
-  const [tradeDate, setTradeDate] = useState('');
-  const [data, setData] = useState<{
-    columns: string[];
-    rows: Array<Array<string | number | null>>;
-  } | null>(null);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const apiQuickRef = [
+    ['获取股票列表', 'stock_basic', 'list_status=L', 'ts_code,name,industry'],
+    ['日线行情', 'daily', 'ts_code,start_date', 'open,high,low,close,vol'],
+    ['财务指标', 'fina_indicator', 'ts_code,period', 'roe,roa,debt_to_assets'],
+    ['利润表', 'income', 'ts_code,period', 'revenue,n_income'],
+    ['资金流向', 'moneyflow', 'ts_code,trade_date', 'buy_lg_amount,sell_lg_amount'],
+    ['北向资金', 'hk_hold', 'ts_code,trade_date', 'hold_amount,hold_ratio'],
+  ];
 
-  const fetchTables = useCallback(async () => {
-    try {
-      const response = await getJson<{ data: string[] }>('/api/ods/tables');
-      setTables(response.data);
-      if (response.data.length > 0 && !response.data.includes(selectedTable)) {
-        setSelectedTable(response.data[0]);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '加载表列表失败';
-      setError(message);
+  const sampleCode = `import tushare as ts
+import pandas as pd
+
+# 初始化
+pro = ts.pro_api('your_token')
+
+# 1. 获取股票基本信息
+df_basic = pro.stock_basic(exchange='', list_status='L',
+                           fields='ts_code,symbol,name,area,industry')
+
+# 2. 获取财务指标 (近4个季度)
+df_indicator = pro.fina_indicator(ts_code='000001.SZ',
+                                  fields='ts_code,end_date,roe,roa,gross_margin')
+
+# 3. 获取日线行情 (近1年)
+df_daily = pro.daily(ts_code='000001.SZ',
+                     start_date='20250101', end_date='20260101')
+
+# 4. 获取每日指标
+df_basic_daily = pro.daily_basic(ts_code='000001.SZ',
+                                 fields='ts_code,trade_date,pe,pb,ps,total_mv')
+
+# 5. 获取资金流向
+df_money = pro.moneyflow(ts_code='000001.SZ',
+                         start_date='20260101', end_date='20260201')
+
+# 6. 计算基本面评分示例
+def calc_fundamental_score(indicator_df):
+    score = 0
+    latest = indicator_df.iloc[0]
+
+    # ROE评分 (15分)
+    roe = latest['roe']
+    score += min(15, roe * 15 / 15)
+
+    # 净利润增长率 (10分) - 需计算同比
+    # ...
+
+    return score
+
+# 7. 综合评分
+def calculate_stock_score(ts_code):
+    scores = {
+        'fundamental': calc_fundamental_score(...),  # 40分
+        'growth': calc_growth_score(...),            # 20分
+        'valuation': calc_valuation_score(...),      # 15分
+        'market': calc_market_score(...),            # 10分
+        'capital': calc_capital_score(...),          # 10分
+        'risk': calc_risk_penalty(...)               # -5~0分
     }
-  }, [selectedTable]);
-
-  const fetchRows = useCallback(
-    async (currentPage: number) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await getJson<{
-          data: {
-            columns: string[];
-            rows: Array<Array<string | number | null>>;
-            total: number;
-            page: number;
-          };
-        }>('/api/ods/rows', {
-          table: selectedTable,
-          page: currentPage,
-          search_ts_code: tsCode || undefined,
-          search_trade_date: tradeDate || undefined,
-        });
-        setData({ columns: response.data.columns, rows: response.data.rows });
-        setTotal(response.data.total);
-        setPage(response.data.page);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : '读取数据失败';
-        setError(message);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [selectedTable, tsCode, tradeDate],
-  );
-
-  useEffect(() => {
-    fetchTables();
-  }, [fetchTables]);
-
-  useEffect(() => {
-    fetchRows(1);
-  }, [selectedTable, fetchRows]);
-
-  const totalPages = Math.max(1, Math.ceil(total / 50));
+    total = sum(scores.values())
+    return total, scores`;
 
   return (
     <motion.section
@@ -104,136 +86,41 @@ export function DataBrowser() {
             <div className="p-2 rounded-lg bg-indigo-500/10">
               <Database className="w-5 h-5 text-indigo-400" />
             </div>
-            <CardTitle className="text-lg font-semibold">ODS 数据浏览</CardTitle>
+            <CardTitle className="text-lg font-semibold">Python 实现示例与接口速查</CardTitle>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="space-y-2">
-              <Label className="text-sm text-muted-foreground">表</Label>
-              <Select
-                value={selectedTable}
-                onValueChange={(value) => {
-                  setSelectedTable(value);
-                  setPage(1);
-                }}
-              >
-                <SelectTrigger className="w-[200px] bg-secondary/50 border-border/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-card border-border/50">
-                  {tables.map((table) => (
-                    <SelectItem key={table} value={table}>
-                      {table}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="ts-code" className="text-sm text-muted-foreground">
-                ts_code
-              </Label>
-              <Input
-                id="ts-code"
-                placeholder="股票代码"
-                className="w-[180px] bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono"
-                value={tsCode}
-                onChange={(event) => setTsCode(event.target.value)}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="trade-date" className="text-sm text-muted-foreground">
-                trade_date
-              </Label>
-              <Input
-                id="trade-date"
-                placeholder="YYYYMMDD"
-                className="w-[150px] bg-secondary/50 border-border/50 focus:border-sky-500/50 focus:ring-sky-500/20 font-mono"
-                value={tradeDate}
-                onChange={(event) => setTradeDate(event.target.value)}
-              />
-            </div>
-            
-            <GradientButton
-              variant="primary"
-              size="sm"
-              onClick={() => fetchRows(1)}
-              disabled={loading}
-            >
-              <Search className="w-4 h-4 mr-2" />
-              {loading ? '加载中...' : '搜索'}
-            </GradientButton>
+        <CardContent className="space-y-6">
+          <div>
+            <h4 className="text-sm font-medium text-muted-foreground mb-3">实现示例</h4>
+            <pre className="rounded-xl border border-border/50 bg-secondary/30 p-4 text-xs text-foreground overflow-auto">
+              <code>{sampleCode}</code>
+            </pre>
           </div>
-          
-          {error ? (
-            <Alert variant="destructive" className="border-red-500/30 bg-red-500/10">
-              <AlertCircle className="h-4 w-4 text-red-400" />
-              <AlertTitle className="text-red-400">读取 ODS 数据失败</AlertTitle>
-              <AlertDescription className="text-red-300/80">{error}</AlertDescription>
-            </Alert>
-          ) : null}
 
-          {data ? (
+          <div>
+            <h4 className="text-sm font-medium text-muted-foreground mb-3">常用接口快速查询表</h4>
             <div className="rounded-xl border border-border/50 overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow className="bg-secondary/50 hover:bg-secondary/50">
-                    {data.columns.map((column) => (
-                      <TableHead key={column} className="text-muted-foreground">
-                        {column}
-                      </TableHead>
-                    ))}
+                    <TableHead className="text-muted-foreground">数据需求</TableHead>
+                    <TableHead className="text-muted-foreground">接口名称</TableHead>
+                    <TableHead className="text-muted-foreground">关键参数</TableHead>
+                    <TableHead className="text-muted-foreground">返回字段示例</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.rows.length > 0 ? (
-                    data.rows.map((row, rowIndex) => (
-                      <TableRow key={rowIndex} className="hover:bg-secondary/30">
-                        {row.map((value, cellIndex) => (
-                          <TableCell key={`${rowIndex}-${cellIndex}`} className="font-mono text-xs">
-                            {value === null || value === undefined ? '-' : String(value)}
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell
-                        colSpan={Math.max(data.columns.length, 1)}
-                        className="text-center text-muted-foreground py-8"
-                      >
-                        暂无数据
-                      </TableCell>
+                  {apiQuickRef.map((row) => (
+                    <TableRow key={row[0]} className="hover:bg-secondary/30">
+                      {row.map((cell) => (
+                        <TableCell key={`${row[0]}-${cell}`} className="text-sm">
+                          {cell}
+                        </TableCell>
+                      ))}
                     </TableRow>
-                  )}
+                  ))}
                 </TableBody>
               </Table>
-            </div>
-          ) : null}
-
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>共 {total} 条</span>
-            <div className="flex items-center gap-3">
-              <button
-                className="px-2 py-1 rounded-md border border-border/50"
-                onClick={() => fetchRows(Math.max(page - 1, 1))}
-                disabled={page <= 1 || loading}
-              >
-                上一页
-              </button>
-              <span>
-                第 {page} / {totalPages} 页
-              </span>
-              <button
-                className="px-2 py-1 rounded-md border border-border/50"
-                onClick={() => fetchRows(Math.min(page + 1, totalPages))}
-                disabled={page >= totalPages || loading}
-              >
-                下一页
-              </button>
             </div>
           </div>
         </CardContent>
