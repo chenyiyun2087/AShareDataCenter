@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Optional
+import logging
+import time
+from typing import Callable, Optional, TypeVar
 
 import tushare as ts
 import pandas as pd
+from requests import exceptions as requests_exceptions
 
 from ..base.runtime import (
     RateLimiter,
@@ -21,21 +24,57 @@ from ..base.runtime import (
 )
 
 DEFAULT_RATE_LIMIT = 500
+DEFAULT_RETRY_ATTEMPTS = 3
+DEFAULT_RETRY_DELAY_S = 1.0
+
+T = TypeVar("T")
+
+
+logger = logging.getLogger(__name__)
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
+def call_with_retry(
+    action: Callable[[], T],
+    *,
+    attempts: int = DEFAULT_RETRY_ATTEMPTS,
+    base_delay_s: float = DEFAULT_RETRY_DELAY_S,
+) -> T:
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return action()
+        except requests_exceptions.RequestException as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                raise
+            time.sleep(base_delay_s * (2 ** (attempt - 1)))
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("retry attempts exhausted without exception")
+
+
+def log_progress(label: str, current: int, total: int) -> None:
+    if total <= 0:
+        return
+    percent = (current / total) * 100
+    logger.info("%s progress: %s/%s (%.1f%%)", label, current, total, percent)
 
 
 def fetch_daily(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
     limiter.wait()
-    return pro.daily(trade_date=str(trade_date))
+    return call_with_retry(lambda: pro.daily(trade_date=str(trade_date)))
 
 
 def fetch_daily_basic(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
     limiter.wait()
-    return pro.daily_basic(trade_date=str(trade_date))
+    return call_with_retry(lambda: pro.daily_basic(trade_date=str(trade_date)))
 
 
 def fetch_adj_factor(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
     limiter.wait()
-    return pro.adj_factor(trade_date=str(trade_date))
+    return call_with_retry(lambda: pro.adj_factor(trade_date=str(trade_date)))
 
 
 def fetch_fina_indicator(
@@ -46,7 +85,9 @@ def fetch_fina_indicator(
     end_date: int,
 ):
     limiter.wait()
-    return pro.fina_indicator(ts_code=ts_code, start_date=str(start_date), end_date=str(end_date))
+    return call_with_retry(
+        lambda: pro.fina_indicator(ts_code=ts_code, start_date=str(start_date), end_date=str(end_date))
+    )
 
 
 def load_ods_daily(cursor, df) -> None:
@@ -167,7 +208,10 @@ def run_full(token: str, start_date: int, rate_limit: int = DEFAULT_RATE_LIMIT) 
         try:
             with conn.cursor() as cursor:
                 trade_dates = list_trade_dates(cursor, start_date)
-            for trade_date in trade_dates:
+            total_dates = len(trade_dates)
+            logger.info("ODS full load: %s trade dates to process", total_dates)
+            for index, trade_date in enumerate(trade_dates, start=1):
+                log_progress("ODS full load", index, total_dates)
                 with conn.cursor() as cursor:
                     daily = fetch_daily(pro, limiter, trade_date)
                     load_ods_daily(cursor, daily)
@@ -211,8 +255,11 @@ def run_incremental(
                 if last_date is None:
                     raise RuntimeError("missing watermark for ods_daily")
                 trade_dates = list_trade_dates_after(cursor, last_date)
+            total_dates = len(trade_dates)
+            logger.info("ODS incremental load: %s trade dates to process", total_dates)
 
-            for trade_date in trade_dates:
+            for index, trade_date in enumerate(trade_dates, start=1):
+                log_progress("ODS incremental load", index, total_dates)
                 with conn.cursor() as cursor:
                     try:
                         daily = fetch_daily(pro, limiter, trade_date)
@@ -260,8 +307,11 @@ def run_fina_incremental(
             with conn.cursor() as cursor:
                 cursor.execute("SELECT ts_code FROM dim_stock ORDER BY ts_code")
                 ts_codes = [row[0] for row in cursor.fetchall()]
+            total_codes = len(ts_codes)
+            logger.info("ODS fina indicator load: %s ts_code items to process", total_codes)
 
-            for ts_code in ts_codes:
+            for index, ts_code in enumerate(ts_codes, start=1):
+                log_progress("ODS fina indicator load", index, total_codes)
                 with conn.cursor() as cursor:
                     df = fetch_fina_indicator(pro, limiter, ts_code, start_date, end_date)
                     load_ods_fina_indicator(cursor, df)
