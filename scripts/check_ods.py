@@ -89,13 +89,22 @@ def main() -> None:
     failures = []
     for label, value in checks:
         print(f"  - {label}: {value}")
-        if label != "ods_fina_indicator.end_date" and value != expected_date:
+        if label == "ods_fina_indicator.end_date":
+            continue
+        if label == "dim_trade_cal":
+            if value is None or value < expected_date:
+                failures.append(label)
+            continue
+        if value != expected_date:
             failures.append(label)
 
     if failures:
         print("FAILED: ODS tables not up to expected trade date.")
         for label in failures:
-            print(f"  * {label} does not match {expected_date}")
+            if label == "dim_trade_cal":
+                print(f"  * {label} is behind {expected_date}")
+            else:
+                print(f"  * {label} does not match {expected_date}")
         raise SystemExit(1)
 
     print("SUCCESS: ODS tables match expected trade date.")
