@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from ..base.runtime import (
@@ -221,12 +222,24 @@ def run_full(start_date: int) -> None:
             with conn.cursor() as cursor:
                 trade_dates = list_trade_dates(cursor, start_date)
 
-            for trade_date in trade_dates:
+            total_dates = len(trade_dates)
+            logging.info(f"Processing {total_dates} trade dates from {start_date}")
+            
+            for idx, trade_date in enumerate(trade_dates, 1):
+                if idx == 1 or idx % 50 == 0 or idx == total_dates:
+                    logging.info(f"[{idx}/{total_dates}] Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
                     load_dwd_daily(cursor, trade_date)
                     load_dwd_daily_basic(cursor, trade_date)
                     load_dwd_adj_factor(cursor, trade_date)
+                    # New DWD tables
+                    load_dwd_stock_daily_standard(cursor, trade_date)
+                    load_dwd_fina_snapshot(cursor, trade_date)
+                    load_dwd_margin_sentiment(cursor, trade_date)
+                    load_dwd_chip_stability(cursor, trade_date)
                     conn.commit()
+            
+            logging.info("All DWD tables updated successfully")
 
             with conn.cursor() as cursor:
                 ensure_watermark(cursor, "dwd_daily", start_date - 1)
@@ -277,15 +290,22 @@ def run_incremental() -> None:
                 trade_dates = list_trade_dates_after(cursor, last_date)
 
             for trade_date in trade_dates:
+                logging.info(f"Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
                     try:
                         load_dwd_daily(cursor, trade_date)
                         load_dwd_daily_basic(cursor, trade_date)
                         load_dwd_adj_factor(cursor, trade_date)
+                        # New DWD tables
+                        load_dwd_stock_daily_standard(cursor, trade_date)
+                        load_dwd_fina_snapshot(cursor, trade_date)
+                        load_dwd_margin_sentiment(cursor, trade_date)
+                        load_dwd_chip_stability(cursor, trade_date)
                         update_watermark(cursor, "dwd_daily", trade_date, "SUCCESS")
                         update_watermark(cursor, "dwd_daily_basic", trade_date, "SUCCESS")
                         update_watermark(cursor, "dwd_adj_factor", trade_date, "SUCCESS")
                         conn.commit()
+                        logging.info(f"  Completed trade_date={trade_date}")
                     except Exception as exc:
                         update_watermark(cursor, "dwd_daily", last_date, "FAILED", str(exc))
                         update_watermark(cursor, "dwd_daily_basic", last_date, "FAILED", str(exc))

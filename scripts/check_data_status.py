@@ -225,13 +225,25 @@ def main() -> None:
         TableCheck("dwd_daily", "trade_date", "dwd"),
         TableCheck("dwd_daily_basic", "trade_date", "dwd"),
         TableCheck("dwd_adj_factor", "trade_date", "dwd"),
+        # New DWD tables
+        TableCheck("dwd_stock_daily_standard", "trade_date", "dwd"),
+        TableCheck("dwd_fina_snapshot", "trade_date", "dwd"),
+        TableCheck("dwd_margin_sentiment", "trade_date", "dwd"),
+        TableCheck("dwd_chip_stability", "trade_date", "dwd"),
     ]
     dws_tables = [
         TableCheck("dws_price_adj_daily", "trade_date", "dws"),
+        # New DWS tables
+        TableCheck("dws_tech_pattern", "trade_date", "dws"),
+        TableCheck("dws_capital_flow", "trade_date", "dws"),
+        TableCheck("dws_leverage_sentiment", "trade_date", "dws"),
+        TableCheck("dws_chip_dynamics", "trade_date", "dws"),
     ]
     ads_tables = [
         TableCheck("ads_features_stock_daily", "trade_date", "ads"),
         TableCheck("ads_universe_daily", "trade_date", "ads"),
+        # New ADS table
+        TableCheck("ads_stock_score_daily", "trade_date", "ads"),
     ]
 
     with get_mysql_connection(cfg) as conn:

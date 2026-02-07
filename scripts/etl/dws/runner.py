@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from ..base.runtime import (
     ensure_watermark,
     get_env_config,
@@ -10,6 +11,14 @@ from ..base.runtime import (
     log_run_end,
     log_run_start,
     update_watermark,
+)
+from .scoring import (
+    _run_momentum_score,
+    _run_value_score,
+    _run_quality_score,
+    _run_technical_score,
+    _run_capital_score,
+    _run_chip_score,
 )
 
 
@@ -134,7 +143,7 @@ def _run_fina_pit(cursor, trade_date: int | None = None) -> None:
       netprofit_margin = VALUES(netprofit_margin),
       updated_at = CURRENT_TIMESTAMP;
     """
-    cursor.execute(sql, params)
+    cursor.execute(sql, params if params else None)
 
 
 def _run_tech_pattern(cursor, trade_date: int | None = None) -> None:
@@ -178,7 +187,7 @@ def _run_tech_pattern(cursor, trade_date: int | None = None) -> None:
         boll_lower = VALUES(boll_lower),
         boll_width = VALUES(boll_width)
     """
-    cursor.execute(sql, params)
+    cursor.execute(sql, params if params else None)
 
 
 def _run_capital_flow(cursor, trade_date: int | None = None) -> None:
@@ -215,7 +224,7 @@ def _run_capital_flow(cursor, trade_date: int | None = None) -> None:
         main_net_ma5 = VALUES(main_net_ma5),
         vol_price_corr = VALUES(vol_price_corr)
     """
-    cursor.execute(sql, params)
+    cursor.execute(sql, params if params else None)
 
 
 def _run_leverage_sentiment(cursor, trade_date: int | None = None) -> None:
@@ -251,7 +260,7 @@ def _run_leverage_sentiment(cursor, trade_date: int | None = None) -> None:
         rq_pressure_factor = VALUES(rq_pressure_factor),
         turnover_spike = VALUES(turnover_spike)
     """
-    cursor.execute(sql, params)
+    cursor.execute(sql, params if params else None)
 
 
 def _run_chip_dynamics(cursor, trade_date: int | None = None) -> None:
@@ -270,13 +279,10 @@ def _run_chip_dynamics(cursor, trade_date: int | None = None) -> None:
         cs.trade_date,
         cs.ts_code,
         cs.winner_rate AS profit_ratio,
-        -- Profit pressure: high when winner_rate > 90%
         CASE WHEN cs.winner_rate > 0.9 THEN (cs.winner_rate - 0.9) * 10 
              ELSE 0 END AS profit_pressure,
-        -- Support strength: inverse of profit pressure when low winner_rate
         CASE WHEN cs.winner_rate < 0.1 THEN (0.1 - cs.winner_rate) * 10 
              ELSE 0 END AS support_strength,
-        -- Chip peak cross placeholder
         cs.chip_concentration AS chip_peak_cross
     FROM dwd_chip_stability cs
     {filter_sql}
@@ -286,10 +292,11 @@ def _run_chip_dynamics(cursor, trade_date: int | None = None) -> None:
         support_strength = VALUES(support_strength),
         chip_peak_cross = VALUES(chip_peak_cross)
     """
-    cursor.execute(sql, params)
+    cursor.execute(sql, params if params else None)
 
 
 def run_full(start_date: int) -> None:
+    """Run full DWS ETL by processing each trade date to avoid lock overflow."""
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -297,9 +304,38 @@ def run_full(start_date: int) -> None:
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                _run_price_adj(cursor)
-                _run_fina_pit(cursor)
-                conn.commit()
+                cursor.execute(
+                    "SELECT DISTINCT cal_date FROM dim_trade_cal "
+                    "WHERE exchange='SSE' AND is_open=1 AND cal_date >= %s "
+                    "ORDER BY cal_date",
+                    (start_date,)
+                )
+                trade_dates = [row[0] for row in cursor.fetchall()]
+            
+            total_dates = len(trade_dates)
+            logging.info(f"Processing {total_dates} trade dates from {start_date}")
+            
+            for idx, trade_date in enumerate(trade_dates, 1):
+                if idx == 1 or idx % 50 == 0 or idx == total_dates:
+                    logging.info(f"[{idx}/{total_dates}] Processing trade_date={trade_date}")
+                with conn.cursor() as cursor:
+                    # Theme tables
+                    _run_price_adj(cursor, trade_date)
+                    _run_fina_pit(cursor, trade_date)
+                    _run_tech_pattern(cursor, trade_date)
+                    _run_capital_flow(cursor, trade_date)
+                    _run_leverage_sentiment(cursor, trade_date)
+                    _run_chip_dynamics(cursor, trade_date)
+                    # Scoring tables
+                    _run_momentum_score(cursor, trade_date)
+                    _run_value_score(cursor, trade_date)
+                    _run_quality_score(cursor, trade_date)
+                    _run_technical_score(cursor, trade_date)
+                    _run_capital_score(cursor, trade_date)
+                    _run_chip_score(cursor, trade_date)
+                    conn.commit()
+            
+            logging.info("All DWS tables updated successfully")
 
             with conn.cursor() as cursor:
                 ensure_watermark(cursor, "dws", start_date - 1)
@@ -329,12 +365,37 @@ def run_incremental() -> None:
                 trade_dates = list_trade_dates_after(cursor, last_date)
 
             for trade_date in trade_dates:
+                logging.info(f"Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
                     try:
+                        logging.info("  [1/12] Running dws_price_adj_daily...")
                         _run_price_adj(cursor, trade_date)
+                        logging.info("  [2/12] Running dws_fina_pit_daily...")
                         _run_fina_pit(cursor, trade_date)
+                        logging.info("  [3/12] Running dws_tech_pattern...")
+                        _run_tech_pattern(cursor, trade_date)
+                        logging.info("  [4/12] Running dws_capital_flow...")
+                        _run_capital_flow(cursor, trade_date)
+                        logging.info("  [5/12] Running dws_leverage_sentiment...")
+                        _run_leverage_sentiment(cursor, trade_date)
+                        logging.info("  [6/12] Running dws_chip_dynamics...")
+                        _run_chip_dynamics(cursor, trade_date)
+                        # Scoring tables
+                        logging.info("  [7/12] Running dws_momentum_score...")
+                        _run_momentum_score(cursor, trade_date)
+                        logging.info("  [8/12] Running dws_value_score...")
+                        _run_value_score(cursor, trade_date)
+                        logging.info("  [9/12] Running dws_quality_score...")
+                        _run_quality_score(cursor, trade_date)
+                        logging.info("  [10/12] Running dws_technical_score...")
+                        _run_technical_score(cursor, trade_date)
+                        logging.info("  [11/12] Running dws_capital_score...")
+                        _run_capital_score(cursor, trade_date)
+                        logging.info("  [12/12] Running dws_chip_score...")
+                        _run_chip_score(cursor, trade_date)
                         update_watermark(cursor, "dws", trade_date, "SUCCESS")
                         conn.commit()
+                        logging.info(f"  Completed trade_date={trade_date}")
                     except Exception as exc:
                         update_watermark(cursor, "dws", last_date, "FAILED", str(exc))
                         conn.rollback()

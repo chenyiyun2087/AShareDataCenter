@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from ..base.runtime import (
     ensure_watermark,
     get_env_config,
@@ -84,7 +85,7 @@ def _run_features(cursor, trade_date: int | None = None) -> None:
       industry_code = VALUES(industry_code),
       updated_at = CURRENT_TIMESTAMP;
     """
-    cursor.execute(sql, params)
+    cursor.execute(sql, params if params else None)
 
 
 def _run_universe(cursor, trade_date: int | None = None) -> None:
@@ -123,7 +124,7 @@ def _run_universe(cursor, trade_date: int | None = None) -> None:
       filter_flags = VALUES(filter_flags),
       updated_at = CURRENT_TIMESTAMP;
     """
-    cursor.execute(sql, params)
+    cursor.execute(sql, params if params else None)
 
 
 def _run_stock_score(cursor, trade_date: int | None = None) -> None:
@@ -207,10 +208,11 @@ def _run_stock_score(cursor, trade_date: int | None = None) -> None:
         score_rank = VALUES(score_rank),
         updated_at = CURRENT_TIMESTAMP
     """
-    cursor.execute(sql, params)
+    cursor.execute(sql, params if params else None)
 
 
 def run_full(start_date: int) -> None:
+    """Run full ADS ETL by processing each trade date to avoid lock overflow."""
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -218,9 +220,27 @@ def run_full(start_date: int) -> None:
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                _run_features(cursor)
-                _run_universe(cursor)
-                conn.commit()
+                cursor.execute(
+                    "SELECT DISTINCT cal_date FROM dim_trade_cal "
+                    "WHERE exchange='SSE' AND is_open=1 AND cal_date >= %s "
+                    "ORDER BY cal_date",
+                    (start_date,)
+                )
+                trade_dates = [row[0] for row in cursor.fetchall()]
+            
+            total_dates = len(trade_dates)
+            logging.info(f"Processing {total_dates} trade dates from {start_date}")
+            
+            for idx, trade_date in enumerate(trade_dates, 1):
+                if idx == 1 or idx % 50 == 0 or idx == total_dates:
+                    logging.info(f"[{idx}/{total_dates}] Processing trade_date={trade_date}")
+                with conn.cursor() as cursor:
+                    _run_features(cursor, trade_date)
+                    _run_universe(cursor, trade_date)
+                    _run_stock_score(cursor, trade_date)
+                    conn.commit()
+            
+            logging.info("All ADS tables updated successfully")
 
             with conn.cursor() as cursor:
                 ensure_watermark(cursor, "ads", start_date - 1)
@@ -250,12 +270,18 @@ def run_incremental() -> None:
                 trade_dates = list_trade_dates_after(cursor, last_date)
 
             for trade_date in trade_dates:
+                logging.info(f"Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
                     try:
+                        logging.info("  [1/3] Running ads_features_stock_daily...")
                         _run_features(cursor, trade_date)
+                        logging.info("  [2/3] Running ads_universe_daily...")
                         _run_universe(cursor, trade_date)
+                        logging.info("  [3/3] Running ads_stock_score_daily...")
+                        _run_stock_score(cursor, trade_date)
                         update_watermark(cursor, "ads", trade_date, "SUCCESS")
                         conn.commit()
+                        logging.info(f"  Completed trade_date={trade_date}")
                     except Exception as exc:
                         update_watermark(cursor, "ads", last_date, "FAILED", str(exc))
                         conn.rollback()

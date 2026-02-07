@@ -634,6 +634,86 @@ CREATE TABLE IF NOT EXISTS dws_chip_dynamics (
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='筹码分布主题表';
 
+-- 动量评分表
+CREATE TABLE IF NOT EXISTS dws_momentum_score (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  ret_5_score DECIMAL(4,2) NULL COMMENT '5日收益评分(0-5)',
+  ret_20_score DECIMAL(4,2) NULL COMMENT '20日收益评分(0-5)',
+  ret_60_score DECIMAL(4,2) NULL COMMENT '60日收益评分(0-5)',
+  vol_ratio_score DECIMAL(4,2) NULL COMMENT '量比评分(0-5)',
+  turnover_score DECIMAL(4,2) NULL COMMENT '换手率评分(0-5)',
+  momentum_score DECIMAL(5,2) NULL COMMENT '动量总分(0-25)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='动量评分表';
+
+-- 价值评分表
+CREATE TABLE IF NOT EXISTS dws_value_score (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  pe_score DECIMAL(4,2) NULL COMMENT 'PE评分(0-7)',
+  pb_score DECIMAL(4,2) NULL COMMENT 'PB评分(0-7)',
+  ps_score DECIMAL(4,2) NULL COMMENT 'PS评分(0-6)',
+  value_score DECIMAL(5,2) NULL COMMENT '价值总分(0-20)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='价值评分表';
+
+-- 质量评分表
+CREATE TABLE IF NOT EXISTS dws_quality_score (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  roe_score DECIMAL(4,2) NULL COMMENT 'ROE评分(0-8)',
+  margin_score DECIMAL(4,2) NULL COMMENT '毛利率评分(0-6)',
+  leverage_score DECIMAL(4,2) NULL COMMENT '负债率评分(0-6)',
+  quality_score DECIMAL(5,2) NULL COMMENT '质量总分(0-20)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='质量评分表';
+
+-- 技术评分表
+CREATE TABLE IF NOT EXISTS dws_technical_score (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  macd_score DECIMAL(4,2) NULL COMMENT 'MACD评分(0-5)',
+  kdj_score DECIMAL(4,2) NULL COMMENT 'KDJ评分(0-5)',
+  rsi_score DECIMAL(4,2) NULL COMMENT 'RSI评分(0-5)',
+  technical_score DECIMAL(5,2) NULL COMMENT '技术总分(0-15)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='技术评分表';
+
+-- 资金评分表
+CREATE TABLE IF NOT EXISTS dws_capital_score (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  elg_net DECIMAL(18,2) NULL COMMENT '特大单净流入(万元)',
+  lg_net DECIMAL(18,2) NULL COMMENT '大单净流入(万元)',
+  elg_score DECIMAL(4,2) NULL COMMENT '特大单评分(0-6)',
+  lg_score DECIMAL(4,2) NULL COMMENT '大单评分(0-4)',
+  capital_score DECIMAL(5,2) NULL COMMENT '资金总分(0-10)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='资金评分表';
+
+-- 筹码评分表
+CREATE TABLE IF NOT EXISTS dws_chip_score (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  winner_score DECIMAL(4,2) NULL COMMENT '获利比例评分(0-6)',
+  cost_score DECIMAL(4,2) NULL COMMENT '成本偏离评分(0-4)',
+  chip_score DECIMAL(5,2) NULL COMMENT '筹码总分(0-10)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='筹码评分表';
+
 -- ========== ADS 服务层 ==========
 --股票日频因子服务表
 CREATE TABLE IF NOT EXISTS ads_features_stock_daily (
