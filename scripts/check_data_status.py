@@ -61,6 +61,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Minimum trade_date for financial PIT tables.",
     )
+    parser.add_argument(
+        "--categories",
+        default=None,
+        help="Comma-separated categories to check (e.g. ods,features,financial,dwd,dws,ads).",
+    )
+    parser.add_argument(
+        "--fail-on-stale",
+        action="store_true",
+        help="Exit with non-zero status when any selected table is stale or empty.",
+    )
     return parser.parse_args()
 
 
@@ -148,10 +158,11 @@ def _print_table_rows(
     tables: Iterable[TableCheck],
     expected_trade_date: Optional[int],
     args: argparse.Namespace,
-) -> None:
+) -> List[tuple[str, str]]:
     header = f"{'table':<28} {'max_date':<10} {'rows':<10} {'updated_at':<20} {'status':<8} {'threshold':<10}"
     print(header)
     print("-" * len(header))
+    statuses: List[tuple[str, str]] = []
     for table in tables:
         max_date, total_rows, updated_at = _fetch_table_stats(cursor, table)
         threshold = _resolve_threshold(
@@ -160,10 +171,12 @@ def _print_table_rows(
             args=args,
         )
         status = _status_for_date(max_date, threshold)
+        statuses.append((table.name, status))
         print(
             f"{table.name:<28} {str(max_date):<10} {total_rows:<10} "
             f"{str(updated_at):<20} {status:<8} {str(threshold):<10}"
         )
+    return statuses
 
 
 def _print_watermarks(cursor, api_names: List[str]) -> None:
@@ -208,6 +221,18 @@ def main() -> None:
         TableCheck("ods_stk_factor", "trade_date", "features"),
         TableCheck("ads_features_stock_daily", "trade_date", "features"),
     ]
+    dwd_tables = [
+        TableCheck("dwd_daily", "trade_date", "dwd"),
+        TableCheck("dwd_daily_basic", "trade_date", "dwd"),
+        TableCheck("dwd_adj_factor", "trade_date", "dwd"),
+    ]
+    dws_tables = [
+        TableCheck("dws_price_adj_daily", "trade_date", "dws"),
+    ]
+    ads_tables = [
+        TableCheck("ads_features_stock_daily", "trade_date", "ads"),
+        TableCheck("ads_universe_daily", "trade_date", "ads"),
+    ]
 
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -228,29 +253,74 @@ def main() -> None:
                 ],
             )
 
-            _print_group_header("ODS Daily Tables")
-            _print_table_rows(
-                cursor=cursor,
-                tables=ods_tables,
-                expected_trade_date=expected_trade_date,
-                args=args,
-            )
+            selected = None
+            if args.categories:
+                selected = {c.strip() for c in args.categories.split(",") if c.strip()}
 
-            _print_group_header("Financial Tables")
-            _print_table_rows(
-                cursor=cursor,
-                tables=financial_tables,
-                expected_trade_date=expected_trade_date,
-                args=args,
-            )
+            failures: List[str] = []
 
-            _print_group_header("Feature Tables")
-            _print_table_rows(
-                cursor=cursor,
-                tables=feature_tables,
-                expected_trade_date=expected_trade_date,
-                args=args,
-            )
+            if selected is None or "ods" in selected:
+                _print_group_header("ODS Daily Tables")
+                statuses = _print_table_rows(
+                    cursor=cursor,
+                    tables=ods_tables,
+                    expected_trade_date=expected_trade_date,
+                    args=args,
+                )
+                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+
+            if selected is None or "financial" in selected:
+                _print_group_header("Financial Tables")
+                statuses = _print_table_rows(
+                    cursor=cursor,
+                    tables=financial_tables,
+                    expected_trade_date=expected_trade_date,
+                    args=args,
+                )
+                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+
+            if selected is None or "features" in selected:
+                _print_group_header("Feature Tables")
+                statuses = _print_table_rows(
+                    cursor=cursor,
+                    tables=feature_tables,
+                    expected_trade_date=expected_trade_date,
+                    args=args,
+                )
+                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+
+            if selected is None or "dwd" in selected:
+                _print_group_header("DWD Tables")
+                statuses = _print_table_rows(
+                    cursor=cursor,
+                    tables=dwd_tables,
+                    expected_trade_date=expected_trade_date,
+                    args=args,
+                )
+                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+
+            if selected is None or "dws" in selected:
+                _print_group_header("DWS Tables")
+                statuses = _print_table_rows(
+                    cursor=cursor,
+                    tables=dws_tables,
+                    expected_trade_date=expected_trade_date,
+                    args=args,
+                )
+                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+
+            if selected is None or "ads" in selected:
+                _print_group_header("ADS Tables")
+                statuses = _print_table_rows(
+                    cursor=cursor,
+                    tables=ads_tables,
+                    expected_trade_date=expected_trade_date,
+                    args=args,
+                )
+                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+
+    if failures and args.fail_on_stale:
+        raise SystemExit(f"Stale/empty tables detected: {', '.join(sorted(set(failures)))}")
 
 
 if __name__ == "__main__":

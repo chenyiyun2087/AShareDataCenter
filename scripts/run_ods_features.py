@@ -34,6 +34,12 @@ def parse_args() -> argparse.Namespace:
         default=180,
         help="Requests per minute for cyq_chips (default: 180).",
     )
+    parser.add_argument(
+        "--cyq-chunk-days",
+        type=int,
+        default=5,
+        help="Chunk size in trading days for cyq_chips batch requests (default: 5).",
+    )
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument(
         "--apis",
@@ -231,8 +237,7 @@ def _table_for_api(api_name: str) -> str:
     return table_map[api_name]
 
 
-def _prepare_rows(api_name: str, df: pd.DataFrame, trade_date: int):
-    columns = API_COLUMNS[api_name]
+def _prepare_rows(columns: List[str], df: pd.DataFrame, trade_date: int):
     df = df.copy()
     df.columns = [str(col).strip() for col in df.columns]
     if "trade_date" in columns and "trade_date" not in df.columns:
@@ -264,6 +269,21 @@ def _existing_tables(cursor, schema: str, tables: List[str]) -> set[str]:
     return {row[0] for row in cursor.fetchall()}
 
 
+def _table_columns(cursor, schema: str, table: str) -> List[str]:
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position",
+        [schema, table],
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
+def _chunk_dates(dates: List[int], chunk_size: int) -> List[List[int]]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    return [dates[i : i + chunk_size] for i in range(0, len(dates), chunk_size)]
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     args = parse_args()
@@ -290,7 +310,6 @@ def main() -> None:
         "stk_factor": _fetch_stk_factor,
     }
     apis_require_ts_code = {"cyq_chips"}
-    apis_require_ts_code = {"cyq_chips"}
     cfg = get_env_config()
     rate_limit = args.rate_limit or get_tushare_limit()
     limiter = RateLimiter(rate_limit)
@@ -309,6 +328,9 @@ def main() -> None:
                     "Run sql/ddl.sql to create them."
                 )
             apis = [api for api in apis if table_map.get(api) in existing]
+            table_columns = {
+                table: _table_columns(cursor, cfg.database, table) for table in existing
+            }
             trade_dates = list_trade_dates(cursor, args.start_date)
             ts_codes = _list_ts_codes(cursor) if apis_require_ts_code.intersection(apis) else []
         trade_dates = [d for d in trade_dates if d <= args.end_date]
@@ -318,57 +340,104 @@ def main() -> None:
         total_dates = len(trade_dates)
         total_apis = len(apis)
         total_ts_codes = len(ts_codes) if apis_require_ts_code.intersection(apis) else 0
-        for date_index, trade_date in enumerate(trade_dates, start=1):
-            print(f"Progress: trade_date {date_index}/{total_dates} ({trade_date})")
-            for api_index, api_name in enumerate(apis, start=1):
-                fetcher = api_map.get(api_name)
-                if not fetcher:
+        cyq_chunks = _chunk_dates(trade_dates, args.cyq_chunk_days)
+        for api_index, api_name in enumerate(apis, start=1):
+            fetcher = api_map.get(api_name)
+            if not fetcher:
+                continue
+            if api_name == "cyq_chips":
+                print(f"Progress: api {api_index}/{total_apis} ({api_name})")
+                table = _table_for_api(api_name)
+                api_columns = [
+                    col for col in API_COLUMNS[api_name] if col in table_columns.get(table, [])
+                ]
+                if not api_columns:
+                    print(f"Warning: no matching columns for {api_name} ({table}); skipping.")
                     continue
-                print(f"Progress: api {api_index}/{total_apis} ({api_name}) for {trade_date}")
-                if api_name in apis_require_ts_code:
-                    for ts_index, ts_code in enumerate(ts_codes, start=1):
-                        if total_ts_codes:
-                            print(
-                                "Progress: ts_code "
-                                f"{ts_index}/{total_ts_codes} ({ts_code}) for {api_name} {trade_date}"
-                            )
+                missing_columns = [col for col in API_COLUMNS[api_name] if col not in api_columns]
+                if missing_columns:
+                    print(
+                        "Warning: table columns missing for "
+                        f"{api_name} ({table}): {', '.join(missing_columns)}"
+                    )
+                for ts_index, ts_code in enumerate(ts_codes, start=1):
+                    if total_ts_codes:
+                        print(
+                            "Progress: ts_code "
+                            f"{ts_index}/{total_ts_codes} ({ts_code}) for {api_name}"
+                        )
+                    for chunk_index, chunk in enumerate(cyq_chunks, start=1):
+                        start_date = min(chunk)
+                        end_date = max(chunk)
+                        print(
+                            "Progress: cyq_chips chunk "
+                            f"{chunk_index}/{len(cyq_chunks)} {start_date}-{end_date}"
+                        )
                         try:
                             api_limiter = limiter_map.get(api_name, limiter)
-                            df = fetcher(pro, api_limiter, trade_date, ts_code)
+                            api_limiter.wait()
+                            df = pro.cyq_chips(
+                                ts_code=ts_code,
+                                start_date=str(start_date),
+                                end_date=str(end_date),
+                            )
                         except Exception as exc:
-                            print(f"Fetch failed for {api_name} on {trade_date} {ts_code}: {exc}")
+                            print(
+                                "Fetch failed for cyq_chips "
+                                f"{ts_code} {start_date}-{end_date}: {exc}"
+                            )
                             continue
-                        rows, columns = _prepare_rows(api_name, df, trade_date)
+                        if df.empty:
+                            continue
+                        rows, columns = _prepare_rows(api_columns, df, end_date)
                         if not rows:
                             continue
-                        table = _table_for_api(api_name)
                         try:
                             with conn.cursor() as cursor:
                                 upsert_rows(cursor, table, columns, rows)
                                 conn.commit()
                         except Exception as exc:
                             conn.rollback()
-                            print(f"Insert failed for {api_name} on {trade_date} {ts_code}: {exc}")
+                            print(
+                                "Insert failed for cyq_chips "
+                                f"{ts_code} {start_date}-{end_date}: {exc}"
+                            )
                             continue
-                else:
-                    try:
-                        df = fetcher(pro, limiter, trade_date)
-                    except Exception as exc:
-                        print(f"Fetch failed for {api_name} on {trade_date}: {exc}")
-                        continue
-                    rows, columns = _prepare_rows(api_name, df, trade_date)
-                    if not rows:
-                        continue
-                    table = _table_for_api(api_name)
-                    try:
-                        with conn.cursor() as cursor:
-                            upsert_rows(cursor, table, columns, rows)
-                            conn.commit()
-                    except Exception as exc:
-                        conn.rollback()
-                        print(f"Insert failed for {api_name} on {trade_date}: {exc}")
-                        continue
-            print(f"Completed feature APIs for trade_date={trade_date}")
+                print("Completed cyq_chips")
+                continue
+            for date_index, trade_date in enumerate(trade_dates, start=1):
+                print(f"Progress: trade_date {date_index}/{total_dates} ({trade_date})")
+                print(f"Progress: api {api_index}/{total_apis} ({api_name}) for {trade_date}")
+                try:
+                    df = fetcher(pro, limiter, trade_date)
+                except Exception as exc:
+                    print(f"Fetch failed for {api_name} on {trade_date}: {exc}")
+                    continue
+                table = _table_for_api(api_name)
+                api_columns = [
+                    col for col in API_COLUMNS[api_name] if col in table_columns.get(table, [])
+                ]
+                if not api_columns:
+                    print(f"Warning: no matching columns for {api_name} ({table}); skipping.")
+                    continue
+                missing_columns = [col for col in API_COLUMNS[api_name] if col not in api_columns]
+                if missing_columns:
+                    print(
+                        "Warning: table columns missing for "
+                        f"{api_name} ({table}): {', '.join(missing_columns)}"
+                    )
+                rows, columns = _prepare_rows(api_columns, df, trade_date)
+                if not rows:
+                    continue
+                try:
+                    with conn.cursor() as cursor:
+                        upsert_rows(cursor, table, columns, rows)
+                        conn.commit()
+                except Exception as exc:
+                    conn.rollback()
+                    print(f"Insert failed for {api_name} on {trade_date}: {exc}")
+                    continue
+            print(f"Completed feature APIs for api={api_name}")
     
     logging.info("ODS Features ETL completed successfully")
 
