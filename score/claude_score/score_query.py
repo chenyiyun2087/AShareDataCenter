@@ -28,10 +28,21 @@ class ScoreQuery:
         self.engine = engine
     
     def get_all_scores(self, trade_date: int) -> pd.DataFrame:
-        """获取指定日期所有股票的各维度评分"""
+        """获取指定日期所有股票的各维度评分，包含涨停标记"""
         sql = """
         SELECT 
             m.trade_date, m.ts_code,
+            ds.name,
+            od.pct_chg,
+            CASE 
+                -- 科创板(688)和创业板(3)涨跌停±20%
+                WHEN (m.ts_code LIKE '688%' OR m.ts_code LIKE '3%') AND od.pct_chg >= 19.9 THEN '涨停'
+                WHEN (m.ts_code LIKE '688%' OR m.ts_code LIKE '3%') AND od.pct_chg <= -19.9 THEN '跌停'
+                -- 其他板块涨跌停±10%
+                WHEN od.pct_chg >= 9.9 THEN '涨停'
+                WHEN od.pct_chg <= -9.9 THEN '跌停'
+                ELSE '' 
+            END AS limit_flag,
             m.momentum_score,
             v.value_score,
             q.quality_score,
@@ -47,6 +58,8 @@ class ScoreQuery:
         LEFT JOIN dws_technical_score t ON m.trade_date = t.trade_date AND m.ts_code = t.ts_code
         LEFT JOIN dws_capital_score c ON m.trade_date = c.trade_date AND m.ts_code = c.ts_code
         LEFT JOIN dws_chip_score ch ON m.trade_date = ch.trade_date AND m.ts_code = ch.ts_code
+        LEFT JOIN ods_daily od ON m.trade_date = od.trade_date AND m.ts_code = od.ts_code
+        LEFT JOIN dim_stock ds ON m.ts_code = ds.ts_code
         WHERE m.trade_date = :trade_date
         """
         return pd.read_sql(text(sql), self.engine, params={"trade_date": trade_date})
@@ -212,7 +225,7 @@ def query_top_stocks(trade_date: int, top_n: int = 50, **db_config):
 if __name__ == '__main__':
     '''
     策略回测 (--backtest)： 回测过去 3 个月评分策略的表现（Top 10 等权重持有）。
-    python score/claude_score/score_query.py --backtest
+    python score/claude_score/score_query.py --backtest --days 60 --hold 20
     
     行业对比 (--industry)： 查看各行业平均评分排名，发现高分板块。
     python score/claude_score/score_query.py --industry
