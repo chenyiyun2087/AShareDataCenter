@@ -125,42 +125,77 @@ API_COLUMNS: Dict[str, List[str]] = {
         "winner_rate",
     ],
     "stk_factor": [
-        "trade_date",
-        "ts_code",
-        "close",
-        "open",
-        "high",
-        "low",
-        "pre_close",
-        "change",
-        "pct_change",
-        "vol",
-        "amount",
-        "adj_factor",
-        "open_hfq",
-        "open_qfq",
-        "close_hfq",
-        "close_qfq",
-        "high_hfq",
-        "high_qfq",
-        "low_hfq",
-        "low_qfq",
-        "pre_close_hfq",
-        "pre_close_qfq",
-        "macd_dif",
-        "macd_dea",
-        "macd",
-        "kdj_k",
-        "kdj_d",
-        "kdj_j",
-        "rsi_6",
-        "rsi_12",
-        "rsi_24",
-        "boll_upper",
-        "boll_mid",
-        "boll_lower",
-        "cci",
-        "score",
+        "trade_date", "ts_code",
+        # Basic
+        "open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount",
+        "turnover_rate", "turnover_rate_f", "volume_ratio", "pe", "pe_ttm", "pb", "ps", "ps_ttm",
+        "dv_ratio", "dv_ttm", "total_share", "float_share", "free_share", "total_mv", "circ_mv", "adj_factor",
+        # Adjusted
+        "open_hfq", "open_qfq", "high_hfq", "high_qfq", "low_hfq", "low_qfq",
+        "close_hfq", "close_qfq", "pre_close_hfq", "pre_close_qfq",
+        # Indicators
+        "macd_bfq", "macd_hfq", "macd_qfq",
+        "macd_dea_bfq", "macd_dea_hfq", "macd_dea_qfq",
+        "macd_dif_bfq", "macd_dif_hfq", "macd_dif_qfq",
+        "kdj_bfq", "kdj_hfq", "kdj_qfq",
+        "kdj_d_bfq", "kdj_d_hfq", "kdj_d_qfq", 
+        "kdj_k_bfq", "kdj_k_hfq", "kdj_k_qfq",
+        "rsi_bfq_6", "rsi_hfq_6", "rsi_qfq_6",
+        "rsi_bfq_12", "rsi_hfq_12", "rsi_qfq_12",
+        "rsi_bfq_24", "rsi_hfq_24", "rsi_qfq_24",
+        "boll_upper_bfq", "boll_upper_hfq", "boll_upper_qfq",
+        "boll_mid_bfq", "boll_mid_hfq", "boll_mid_qfq",
+        "boll_lower_bfq", "boll_lower_hfq", "boll_lower_qfq",
+        "cci_bfq", "cci_hfq", "cci_qfq",
+        "asi_bfq", "asi_hfq", "asi_qfq",
+        "asit_bfq", "asit_hfq", "asit_qfq",
+        "atr_bfq", "atr_hfq", "atr_qfq",
+        "bbi_bfq", "bbi_hfq", "bbi_qfq",
+        "bias1_bfq", "bias1_hfq", "bias1_qfq",
+        "bias2_bfq", "bias2_hfq", "bias2_qfq",
+        "bias3_bfq", "bias3_hfq", "bias3_qfq",
+        "brar_ar_bfq", "brar_ar_hfq", "brar_ar_qfq",
+        "brar_br_bfq", "brar_br_hfq", "brar_br_qfq",
+        "cr_bfq", "cr_hfq", "cr_qfq",
+        "dfma_dif_bfq", "dfma_dif_hfq", "dfma_dif_qfq",
+        "dfma_difma_bfq", "dfma_difma_hfq", "dfma_difma_qfq",
+        "dmi_adx_bfq", "dmi_adx_hfq", "dmi_adx_qfq",
+        "dmi_adxr_bfq", "dmi_adxr_hfq", "dmi_adxr_qfq",
+        "dmi_mdi_bfq", "dmi_mdi_hfq", "dmi_mdi_qfq",
+        "dmi_pdi_bfq", "dmi_pdi_hfq", "dmi_pdi_qfq",
+        "dpo_bfq", "dpo_hfq", "dpo_qfq",
+        "madpo_bfq", "madpo_hfq", "madpo_qfq",
+        "emv_bfq", "emv_hfq", "emv_qfq",
+        "maemv_bfq", "maemv_hfq", "maemv_qfq",
+        "ktn_down_bfq", "ktn_down_hfq", "ktn_down_qfq",
+        "ktn_mid_bfq", "ktn_mid_hfq", "ktn_mid_qfq",
+        "ktn_upper_bfq", "ktn_upper_hfq", "ktn_upper_qfq",
+        "mass_bfq", "mass_hfq", "mass_qfq",
+        "ma_mass_bfq", "ma_mass_hfq", "ma_mass_qfq",
+        "mfi_bfq", "mfi_hfq", "mfi_qfq",
+        "mtm_bfq", "mtm_hfq", "mtm_qfq",
+        "mtmma_bfq", "mtmma_hfq", "mtmma_qfq",
+        "obv_bfq", "obv_hfq", "obv_qfq",
+        "psy_bfq", "psy_hfq", "psy_qfq",
+        "psyma_bfq", "psyma_hfq", "psyma_qfq",
+        "roc_bfq", "roc_hfq", "roc_qfq",
+        "maroc_bfq", "maroc_hfq", "maroc_qfq",
+        "taq_down_bfq", "taq_down_hfq", "taq_down_qfq",
+        "taq_mid_bfq", "taq_mid_hfq", "taq_mid_qfq",
+        "taq_up_bfq", "taq_up_hfq", "taq_up_qfq",
+        "trix_bfq", "trix_hfq", "trix_qfq",
+        "trma_bfq", "trma_hfq", "trma_qfq",
+        "vr_bfq", "vr_hfq", "vr_qfq",
+        "wr_bfq", "wr_hfq", "wr_qfq",
+        "wr1_bfq", "wr1_hfq", "wr1_qfq",
+        "xsii_td1_bfq", "xsii_td1_hfq", "xsii_td1_qfq",
+        "xsii_td2_bfq", "xsii_td2_hfq", "xsii_td2_qfq",
+        "xsii_td3_bfq", "xsii_td3_hfq", "xsii_td3_qfq",
+        "xsii_td4_bfq", "xsii_td4_hfq", "xsii_td4_qfq",
+         "ma_bfq_5", "ma_bfq_10", "ma_bfq_20", "ma_bfq_60", "ma_bfq_250",
+         "ma_qfq_5", "ma_qfq_10", "ma_qfq_20", "ma_qfq_60", "ma_qfq_250",
+         "ma_hfq_5", "ma_hfq_10", "ma_hfq_20", "ma_hfq_60", "ma_hfq_250",
+         "updays", "downdays", "lowdays", "topdays"
     ],
 }
 
@@ -220,7 +255,7 @@ def _fetch_stk_factor(
     pro: ts.pro_api, limiter: RateLimiter, trade_date: int, ts_code: Optional[str] = None
 ) -> pd.DataFrame:
     limiter.wait()
-    return pro.stk_factor(trade_date=str(trade_date))
+    return pro.stk_factor_pro(trade_date=str(trade_date))
 
 
 def _table_for_api(api_name: str) -> str:
@@ -313,7 +348,10 @@ def main() -> None:
     cfg = get_env_config()
     rate_limit = args.rate_limit or get_tushare_limit()
     limiter = RateLimiter(rate_limit)
-    limiter_map = {"cyq_chips": RateLimiter(args.cyq_rate_limit)}
+    limiter_map = {
+        "cyq_chips": RateLimiter(args.cyq_rate_limit),
+        "stk_factor": RateLimiter(args.stk_factor_rate_limit),
+    }
     pro = ts.pro_api(token)
 
     with get_mysql_connection(cfg) as conn:
