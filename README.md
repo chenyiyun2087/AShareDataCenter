@@ -10,9 +10,14 @@
 - `scripts/tushare_etl.py`：按层级调用的 TuShare 日频 ETL（全量/增量）
 - `scripts/run_base.py`：base 维表任务
 - `scripts/run_ods.py`：ODS 原始入库
+- `scripts/run_ods_features.py`：ODS 特征数据入库
 - `scripts/run_dwd.py`：DWD 标准明细
 - `scripts/run_dws.py`：DWS 主题衍生
 - `scripts/run_ads.py`：ADS 服务层
+- `scripts/run_daily_pipeline.py`：每日增量全流程（含检查与耗时统计）
+- `scripts/check_ods_features.py`：ODS 特征数据完整性检查
+- `scripts/check_data_status.py`：全链路数据状态检查（ODS/Financial/Features/DWD/DWS/ADS）
+- `scripts/run_fina_yearly.py`：按年补齐财务指标（fina_indicator）
 - `scripts/score_stocks.py`：股票评分脚本（单只/批量）
   - 当 ADS 特征表为空时，自动回退到 DWD/DWS 明细表拼接因子。
   - 可使用 `--fallback-latest` 在指定交易日缺失时自动回退到最新可用交易日。
@@ -51,7 +56,21 @@
    python scripts/run_dws.py --mode incremental
    python scripts/run_ads.py --mode incremental
    ```
-8. Web 控制台：
+8. 每日增量全流程（自动分步校验与耗时统计）：
+   ```bash
+   python scripts/run_daily_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN
+   # 传入 --debug 查看每步耗时与参数
+   python scripts/run_daily_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN --debug
+   ```
+9. 数据检查：
+   ```bash
+   # ODS 特征表完整性
+   python scripts/check_ods_features.py --start-date 20260101 --end-date 20260131 --config config/etl.ini
+
+   # 全链路状态（ODS/Financial/Features/DWD/DWS/ADS）
+   python scripts/check_data_status.py --config config/etl.ini
+   ```
+10. Web 控制台：
    ```bash
    # 先构建前端（在 app/ 目录）
    cd app
