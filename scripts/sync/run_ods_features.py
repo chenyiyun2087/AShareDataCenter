@@ -40,6 +40,12 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Chunk size in trading days for cyq_chips batch requests (default: 5).",
     )
+    parser.add_argument(
+        "--stk-factor-rate-limit",
+        type=int,
+        default=200,
+        help="Requests per minute for stk_factor (default: 200).",
+    )
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument(
         "--apis",
