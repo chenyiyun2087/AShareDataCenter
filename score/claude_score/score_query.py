@@ -211,35 +211,78 @@ def query_top_stocks(trade_date: int, top_n: int = 50, **db_config):
 
 if __name__ == '__main__':
     import sys
+    import argparse
+    import logging
+    from advanced_analysis import AdvancedAnalyzer, create_score_report
+    
+    # 配置日志输出到控制台
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    
+    parser = argparse.ArgumentParser(description='股票评分查询与分析工具')
+    parser.add_argument('codes', nargs='*', help='股票代码列表 (e.g. 000001.SZ)')
+    parser.add_argument('--date', type=int, default=20260206, help='交易日期 (YYYYMMDD)')
+    parser.add_argument('--top', type=int, default=10, help='显示Top N股票')
+    parser.add_argument('--industry', action='store_true', help='执行行业对比分析')
+    parser.add_argument('--backtest', action='store_true', help='执行策略回测')
+    parser.add_argument('--days', type=int, default=90, help='回测天数 (默认90天)')
+    parser.add_argument('--hold', type=int, default=20, help='持仓天数 (默认20天)')
+    parser.add_argument('--report', action='store_true', help='生成Excel分析报告')
+    
+    args = parser.parse_args()
     
     engine = get_engine(password='19871019')
     q = ScoreQuery(engine)
-    trade_date = 20260206
+    analyzer = AdvancedAnalyzer(engine)
     
-    # 如果命令行指定了股票代码，查询这些股票
-    if len(sys.argv) > 1:
-        ts_codes = sys.argv[1:]
-        print(f"查询股票: {ts_codes}")
-        q.print_stock_detail(trade_date, ts_codes)
+    trade_date = args.date
+    
+    # 1. 行业分析
+    if args.industry:
+        analyzer.compare_by_industry(trade_date)
+        sys.exit(0)
+        
+    # 2. 策略回测
+    if args.backtest:
+        import datetime
+        end_dt = datetime.datetime.strptime(str(trade_date), "%Y%m%d")
+        start_dt = end_dt - datetime.timedelta(days=args.days)
+        start_date = int(start_dt.strftime("%Y%m%d"))
+        
+        analyzer.backtest_score_strategy(
+            start_date=start_date, 
+            end_date=trade_date,
+            top_n=args.top,
+            holding_days=args.hold
+        )
+        sys.exit(0)
+        
+    # 3. 生成报告
+    if args.report:
+        create_score_report(engine, trade_date)
+        sys.exit(0)
+    
+    # 4. 股票查询 (默认功能)
+    if args.codes:
+        print(f"查询股票: {args.codes}")
+        q.print_stock_detail(trade_date, args.codes)
     else:
-        # 默认展示Top 10
+        # 默认展示Top N
         print(f"=== {trade_date} 评分统计 ===")
         stats = q.get_score_stats(trade_date)
         print(f"股票数: {stats.get('count', 0)}")
         print(f"平均分: {stats.get('avg_score', 0):.2f}")
         print(f"最高分: {stats.get('max_score', 0):.2f}")
         
-        print(f"\n=== Top 10 高分股票 (各维度详细分数) ===")
+        print(f"\n=== Top {args.top} 高分股票 (各维度详细分数) ===")
         print("维度满分: 动量25 | 价值20 | 质量20 | 技术15 | 资金10 | 筹码10 | 总分100")
         print("-" * 95)
-        top = q.get_top_stocks(trade_date, top_n=10)
+        top = q.get_top_stocks(trade_date, top_n=args.top)
         display_cols = ['rank', 'ts_code', 'total_score', 
                        'momentum_score', 'value_score', 'quality_score',
                        'technical_score', 'capital_score', 'chip_score']
+        # 重命名列以便显示
         top_display = top[display_cols].copy()
         top_display.columns = ['排名', '代码', '总分', '动量', '价值', '质量', '技术', '资金', '筹码']
         print(top_display.to_string(index=False))
         
-        print("\n提示: 可指定股票代码查询详情，如:")
-        print("  python score_query.py 000001.SZ 600519.SH")
-
+        print("\n提示: 可使用 --help 查看更多高级分析功能")

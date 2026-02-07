@@ -5,314 +5,216 @@
 
 import pandas as pd
 import numpy as np
-from sqlalchemy import create_engine
-from typing import List, Dict
+from sqlalchemy import create_engine, text
+from typing import List, Dict, Optional
 import logging
+import os
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 
 class AdvancedAnalyzer:
-    """高级分析工具类"""
+    """高级分析工具类 - 基于DWS评分表"""
     
     def __init__(self, engine):
         self.engine = engine
     
+    def _get_score_data(self, start_date: int, end_date: int) -> pd.DataFrame:
+        """获取指定时间段的评分数据"""
+        sql = """
+        SELECT 
+            m.trade_date, m.ts_code,
+            (COALESCE(m.momentum_score, 0) + COALESCE(v.value_score, 0) + 
+             COALESCE(q.quality_score, 0) + COALESCE(t.technical_score, 0) + 
+             COALESCE(c.capital_score, 0) + COALESCE(ch.chip_score, 0)) AS total_score,
+            m.momentum_score, v.value_score, q.quality_score,
+            t.technical_score, c.capital_score, ch.chip_score
+        FROM dws_momentum_score m
+        LEFT JOIN dws_value_score v ON m.trade_date = v.trade_date AND m.ts_code = v.ts_code
+        LEFT JOIN dws_quality_score q ON m.trade_date = q.trade_date AND m.ts_code = q.ts_code
+        LEFT JOIN dws_technical_score t ON m.trade_date = t.trade_date AND m.ts_code = t.ts_code
+        LEFT JOIN dws_capital_score c ON m.trade_date = c.trade_date AND m.ts_code = c.ts_code
+        LEFT JOIN dws_chip_score ch ON m.trade_date = ch.trade_date AND m.ts_code = ch.ts_code
+        WHERE m.trade_date BETWEEN :start_date AND :end_date
+        """
+        return pd.read_sql(text(sql), self.engine, params={"start_date": start_date, "end_date": end_date})
+
     def backtest_score_strategy(self, start_date: int, end_date: int, 
                                 top_n: int = 50, holding_days: int = 20) -> pd.DataFrame:
         """
         回测评分选股策略
         
         策略逻辑：每次调仓选择评分最高的top_n只股票，持有holding_days天
-        
-        Parameters:
-        -----------
-        start_date : int
-            回测起始日期
-        end_date : int
-            回测结束日期
-        top_n : int
-            每次选择的股票数量
-        holding_days : int
-            持有天数
-        
-        Returns:
-        --------
-        DataFrame with backtest results
         """
         logger.info(f"开始回测评分策略: {start_date} - {end_date}")
         logger.info(f"参数: Top {top_n} 股票, 持有 {holding_days} 天")
         
-        # 获取评分数据
-        query_scores = f"""
-        SELECT 
-            s.trade_date,
-            s.ts_code,
-            s.total_score,
-            s.rank_all,
-            p.close,
-            p.pct_chg
-        FROM ads_stock_score_daily s
-        LEFT JOIN ods_daily p ON s.trade_date = p.trade_date AND s.ts_code = p.ts_code
-        WHERE s.trade_date BETWEEN {start_date} AND {end_date}
-        ORDER BY s.trade_date, s.total_score DESC
-        """
-        
-        df = pd.read_sql(query_scores, self.engine)
-        
-        if df.empty:
+        # 1. 获取评分数据
+        df_scores = self._get_score_data(start_date, end_date)
+        if df_scores.empty:
             logger.warning("未找到评分数据")
             return pd.DataFrame()
+        
+        # 2. 获取行情数据 (ods_daily)
+        price_sql = """
+        SELECT trade_date, ts_code, close, pct_chg
+        FROM ods_daily
+        WHERE trade_date BETWEEN :start_date AND :end_date
+        """
+        df_price = pd.read_sql(text(price_sql), self.engine, params={"start_date": start_date, "end_date": end_date})
+        if df_price.empty:
+            logger.warning("未找到行情数据")
+            return pd.DataFrame() # Return empty if no price data
+            
+        # 合并数据
+        df = pd.merge(df_scores, df_price, on=['trade_date', 'ts_code'], how='inner')
         
         # 获取所有交易日
         trade_dates = sorted(df['trade_date'].unique())
         
         results = []
-        current_portfolio = None
+        current_portfolio = []
         buy_date = None
+        next_rebalance_idx = 0
+        
+        # 初始资金1.0
+        portfolio_value = 1.0
+        benchmark_value = 1.0
+        
+        # 记录每日净值
+        daily_nav = []
         
         for i, date in enumerate(trade_dates):
-            # 检查是否需要调仓
-            if current_portfolio is None or (buy_date and 
-                len([d for d in trade_dates if buy_date <= d < date]) >= holding_days):
-                
-                # 选择当日评分Top N的股票
-                top_stocks = df[df['trade_date'] == date].nlargest(top_n, 'total_score')
-                current_portfolio = top_stocks['ts_code'].tolist()
-                buy_date = date
-                buy_prices = top_stocks.set_index('ts_code')['close'].to_dict()
-                
-                logger.info(f"{date}: 调仓，选择 {len(current_portfolio)} 只股票")
+            # 每日计算：当前持仓的收益
+            day_return = 0.0
             
-            # 计算当日收益
-            portfolio_stocks = df[(df['trade_date'] == date) & 
-                                (df['ts_code'].isin(current_portfolio))]
+            # --- 调仓逻辑 ---
+            # 如果是第一天 或者 到了调仓日
+            if i == next_rebalance_idx:
+                # 选股：当日评分最高的Top N
+                daily_data = df[df['trade_date'] == date]
+                if not daily_data.empty:
+                    top_stocks = daily_data.nlargest(top_n, 'total_score')['ts_code'].tolist()
+                    current_portfolio = top_stocks
+                    buy_date = date
+                    next_rebalance_idx = min(i + holding_days, len(trade_dates) - 1)
+                    if i + holding_days >= len(trade_dates): # 防止越界，但这其实意味着最后一次调仓一直持有到结束
+                         next_rebalance_idx = len(trade_dates) # Ensure logic works
+                    
+                    logger.info(f"{date}: 调仓，买入 {len(current_portfolio)} 只股票")
             
-            if len(portfolio_stocks) > 0:
-                daily_return = portfolio_stocks['pct_chg'].mean()
-                
-                results.append({
-                    'trade_date': date,
-                    'portfolio_size': len(portfolio_stocks),
-                    'daily_return': daily_return,
-                    'avg_score': portfolio_stocks['total_score'].mean()
-                })
-        
-        df_results = pd.DataFrame(results)
+            # --- 收益计算 ---
+            if current_portfolio:
+                # 获取持仓股票当日涨跌幅
+                portfolio_data = df[(df['trade_date'] == date) & (df['ts_code'].isin(current_portfolio))]
+                if not portfolio_data.empty:
+                    # 等权重平均涨跌幅
+                    # 注意：这里简化处理，假设每日收盘都能按pct_chg成交，未考虑手续费和滑点
+                    avg_chg = portfolio_data['pct_chg'].mean()
+                    day_return = avg_chg / 100.0
+            
+            # 更新净值
+            portfolio_value *= (1 + day_return)
+            
+            # 记录
+            daily_nav.append({
+                'trade_date': date,
+                'nav': portfolio_value,
+                'daily_return': day_return,
+                'holdings_count': len(current_portfolio)
+            })
+            
+        df_results = pd.DataFrame(daily_nav)
         
         if not df_results.empty:
-            # 计算累计收益
-            df_results['cumulative_return'] = (1 + df_results['daily_return'] / 100).cumprod() - 1
+            # 计算回撤
+            df_results['max_nav'] = df_results['nav'].cummax()
+            df_results['drawdown'] = (df_results['nav'] - df_results['max_nav']) / df_results['max_nav']
             
-            # 统计指标
-            total_return = df_results['cumulative_return'].iloc[-1]
-            sharpe = df_results['daily_return'].mean() / df_results['daily_return'].std() * np.sqrt(252)
-            max_drawdown = self._calculate_max_drawdown(df_results['cumulative_return'])
+            total_ret = df_results['nav'].iloc[-1] - 1
+            max_dd = df_results['drawdown'].min()
+            
+            # 年化收益 (简单估算)
+            days = len(trade_dates)
+            annual_ret = (1 + total_ret) ** (252 / days) - 1 if days > 0 else 0
             
             logger.info(f"\n回测结果:")
-            logger.info(f"总收益率: {total_return*100:.2f}%")
-            logger.info(f"夏普比率: {sharpe:.2f}")
-            logger.info(f"最大回撤: {max_drawdown*100:.2f}%")
-            logger.info(f"平均持仓数: {df_results['portfolio_size'].mean():.1f}")
-        
+            logger.info(f"总收益率: {total_ret*100:.2f}%")
+            logger.info(f"年化收益: {annual_ret*100:.2f}%")
+            logger.info(f"最大回撤: {max_dd*100:.2f}%")
+            
         return df_results
     
-    def _calculate_max_drawdown(self, cumulative_returns):
-        """计算最大回撤"""
-        running_max = cumulative_returns.cummax()
-        drawdown = (cumulative_returns - running_max) / (1 + running_max)
-        return drawdown.min()
-    
-    def compare_by_industry(self, trade_date: int, industry_col: str = 'industry_code') -> pd.DataFrame:
+    def compare_by_industry(self, trade_date: int) -> pd.DataFrame:
         """
         按行业对比评分
-        
-        Parameters:
-        -----------
-        trade_date : int
-            交易日期
-        industry_col : str
-            行业字段名
-        
-        Returns:
-        --------
-        DataFrame with industry comparison
+        使用 dim_stock 表的 industry 字段
         """
-        query = f"""
-        SELECT 
-            s.*,
-            f.{industry_col}
-        FROM ads_stock_score_daily s
-        LEFT JOIN ads_features_stock_daily f 
-            ON s.trade_date = f.trade_date AND s.ts_code = f.ts_code
-        WHERE s.trade_date = {trade_date}
-          AND f.{industry_col} IS NOT NULL
-        """
-        
-        df = pd.read_sql(query, self.engine)
-        
-        if df.empty:
-            logger.warning("未找到数据")
+        # 1. 获取评分
+        df_scores = self._get_score_data(trade_date, trade_date)
+        if df_scores.empty:
+            logger.warning(f"{trade_date} 无评分数据")
             return pd.DataFrame()
+            
+        # 2. 获取行业信息
+        ind_sql = "SELECT ts_code, industry FROM dim_stock"
+        df_ind = pd.read_sql(text(ind_sql), self.engine)
         
-        # 按行业分组统计
-        industry_stats = df.groupby(industry_col).agg({
-            'total_score': ['mean', 'median', 'std', 'max', 'min'],
-            'ts_code': 'count'
+        # 合并
+        df = pd.merge(df_scores, df_ind, on='ts_code', how='inner')
+        
+        # 聚合统计
+        stats = df.groupby('industry').agg({
+            'total_score': ['count', 'mean', 'median', 'max'],
+            'momentum_score': 'mean',
+            'value_score': 'mean',
+            'quality_score': 'mean',
+            'technical_score': 'mean',
+            'capital_score': 'mean',
+            'chip_score': 'mean'
         }).round(2)
         
-        industry_stats.columns = ['avg_score', 'median_score', 'std_score', 
-                                 'max_score', 'min_score', 'stock_count']
-        industry_stats = industry_stats.reset_index()
-        industry_stats = industry_stats.sort_values('avg_score', ascending=False)
+        # 扁平化列名
+        stats.columns = ['count', 'avg_total', 'median_total', 'max_total',
+                        'avg_momentum', 'avg_value', 'avg_quality',
+                        'avg_technical', 'avg_capital', 'avg_chip']
         
-        logger.info(f"\n行业评分对比 ({trade_date}):")
-        logger.info(f"共 {len(industry_stats)} 个行业")
-        print(industry_stats.head(10).to_string(index=False))
+        stats = stats.sort_values('avg_total', ascending=False)
+        stats = stats.reset_index()
         
-        return industry_stats
-    
-    def find_score_reversal(self, lookback_days: int = 20, 
-                           score_change_threshold: float = 20.0) -> pd.DataFrame:
+        # 过滤样本过少的行业
+        stats = stats[stats['count'] >= 5]
+        
+        logger.info(f"\n行业对比 ({trade_date}):")
+        print(stats.head(10).to_string(index=False))
+        return stats
+
+    def analyze_trend(self, ts_code: str, start_date: int, end_date: int) -> pd.DataFrame:
+        """单只股票评分趋势分析"""
+        sql = """
+        SELECT trade_date, 
+               (COALESCE(m.momentum_score, 0) + COALESCE(v.value_score, 0) + 
+                COALESCE(q.quality_score, 0) + COALESCE(t.technical_score, 0) + 
+                COALESCE(c.capital_score, 0) + COALESCE(ch.chip_score, 0)) AS total_score,
+               m.momentum_score, v.value_score, q.quality_score
+        FROM dws_momentum_score m
+        LEFT JOIN dws_value_score v ON m.trade_date = v.trade_date AND m.ts_code = v.ts_code
+        LEFT JOIN dws_quality_score q ON m.trade_date = q.trade_date AND m.ts_code = q.ts_code
+        LEFT JOIN dws_technical_score t ON m.trade_date = t.trade_date AND m.ts_code = t.ts_code
+        LEFT JOIN dws_capital_score c ON m.trade_date = c.trade_date AND m.ts_code = c.ts_code
+        LEFT JOIN dws_chip_score ch ON m.trade_date = ch.trade_date AND m.ts_code = ch.ts_code
+        WHERE m.ts_code = :ts_code AND m.trade_date BETWEEN :start_date AND :end_date
+        ORDER BY trade_date
         """
-        寻找评分快速上升的股票（潜在黑马）
-        
-        Parameters:
-        -----------
-        lookback_days : int
-            回看天数
-        score_change_threshold : float
-            评分变化阈值
-        
-        Returns:
-        --------
-        DataFrame with reversal stocks
-        """
-        # 获取最近的评分数据
-        query = f"""
-        SELECT 
-            trade_date,
-            ts_code,
-            total_score,
-            rank_all
-        FROM ads_stock_score_daily
-        WHERE trade_date >= (
-            SELECT MAX(trade_date) - {lookback_days * 2}
-            FROM ads_stock_score_daily
-        )
-        ORDER BY ts_code, trade_date
-        """
-        
-        df = pd.read_sql(query, self.engine)
-        
-        if df.empty:
-            return pd.DataFrame()
-        
-        # 计算评分变化
-        df_change = df.groupby('ts_code').agg({
-            'trade_date': ['first', 'last'],
-            'total_score': ['first', 'last'],
-            'rank_all': ['first', 'last']
-        })
-        
-        df_change.columns = ['start_date', 'end_date', 'start_score', 
-                            'end_score', 'start_rank', 'end_rank']
-        df_change['score_change'] = df_change['end_score'] - df_change['start_score']
-        df_change['rank_change'] = df_change['start_rank'] - df_change['end_rank']  # 排名上升为正
-        
-        # 筛选快速上升的股票
-        reversal = df_change[
-            (df_change['score_change'] >= score_change_threshold) &
-            (df_change['rank_change'] > 0)
-        ].sort_values('score_change', ascending=False)
-        
-        reversal = reversal.reset_index()
-        
-        logger.info(f"\n找到 {len(reversal)} 只评分快速上升的股票")
-        if len(reversal) > 0:
-            print(reversal.head(20).to_string(index=False))
-        
-        return reversal
-    
-    def factor_correlation_analysis(self, trade_date: int) -> pd.DataFrame:
-        """
-        分析各维度得分之间的相关性
-        
-        Parameters:
-        -----------
-        trade_date : int
-            交易日期
-        
-        Returns:
-        --------
-        DataFrame with correlation matrix
-        """
-        query = f"""
-        SELECT 
-            momentum_score,
-            value_score,
-            quality_score,
-            technical_score,
-            capital_score,
-            chip_score,
-            total_score
-        FROM ads_stock_score_daily
-        WHERE trade_date = {trade_date}
-        """
-        
-        df = pd.read_sql(query, self.engine)
-        
-        if df.empty:
-            return pd.DataFrame()
-        
-        # 计算相关系数矩阵
-        corr_matrix = df.corr().round(3)
-        
-        logger.info(f"\n因子相关性矩阵 ({trade_date}):")
-        print(corr_matrix.to_string())
-        
-        return corr_matrix
-    
+        return pd.read_sql(text(sql), self.engine, 
+                          params={"ts_code": ts_code, "start_date": start_date, "end_date": end_date})
+
     def screen_stocks(self, trade_date: int, criteria: Dict) -> pd.DataFrame:
-        """
-        自定义筛选股票
+        """自定义筛选 (复用 ScoreQuery 逻辑，但这里为了完整性保留)"""
+        # 这里可以直接调用 _get_score_data 然后 filter
+        df = self._get_score_data(trade_date, trade_date)
         
-        Parameters:
-        -----------
-        trade_date : int
-            交易日期
-        criteria : dict
-            筛选条件，例如:
-            {
-                'total_score': (70, 100),
-                'momentum_score': (15, None),
-                'value_score': (None, 15),
-                'pe_ttm': (0, 30)
-            }
-        
-        Returns:
-        --------
-        DataFrame
-        """
-        query = f"""
-        SELECT 
-            s.*,
-            f.pe_ttm,
-            f.pb,
-            f.total_mv,
-            f.roe
-        FROM ads_stock_score_daily s
-        LEFT JOIN ads_features_stock_daily f 
-            ON s.trade_date = f.trade_date AND s.ts_code = f.ts_code
-        WHERE s.trade_date = {trade_date}
-        """
-        
-        df = pd.read_sql(query, self.engine)
-        
-        if df.empty:
-            return pd.DataFrame()
-        
-        # 应用筛选条件
         for col, (min_val, max_val) in criteria.items():
             if col in df.columns:
                 if min_val is not None:
@@ -320,119 +222,68 @@ class AdvancedAnalyzer:
                 if max_val is not None:
                     df = df[df[col] <= max_val]
         
-        df = df.sort_values('total_score', ascending=False)
-        
-        logger.info(f"\n筛选结果: 找到 {len(df)} 只股票")
-        logger.info(f"筛选条件: {criteria}")
-        
-        return df
+        return df.sort_values('total_score', ascending=False)
 
 
 def create_score_report(engine, trade_date: int, output_file: str = None):
-    """
-    生成评分分析报告
-    
-    Parameters:
-    -----------
-    engine : sqlalchemy.engine.Engine
-        数据库连接
-    trade_date : int
-        交易日期
-    output_file : str
-        输出文件名
-    """
-    from stock_scoring_system import StockScoringSystem
-    
-    scorer = StockScoringSystem(engine)
+    """生成综合分析报告"""
     analyzer = AdvancedAnalyzer(engine)
     
     if output_file is None:
         output_file = f'score_report_{trade_date}.xlsx'
+        
+    logger.info(f"正在生成分析报告: {output_file} ...")
     
     with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-        # 1. 综合统计
-        stats = scorer.analyze_score_distribution(trade_date)
-        pd.DataFrame([stats]).to_excel(writer, sheet_name='统计摘要', index=False)
+        # 1. 全市场评分概览
+        df_scores = analyzer._get_score_data(trade_date, trade_date)
+        if not df_scores.empty:
+            df_scores.sort_values('total_score', ascending=False).head(2000).to_excel(
+                writer, sheet_name='全市场评分(Top2000)', index=False
+            )
+            
+            # 统计摘要
+            stats = {
+                'count': len(df_scores),
+                'avg_score': df_scores['total_score'].mean(),
+                'median_score': df_scores['total_score'].median(),
+                'std_score': df_scores['total_score'].std()
+            }
+            pd.DataFrame([stats]).to_excel(writer, sheet_name='统计摘要', index=False)
+            
+        # 2. 行业分析
+        df_ind = analyzer.compare_by_industry(trade_date)
+        if not df_ind.empty:
+            df_ind.to_excel(writer, sheet_name='行业对比', index=False)
+            
+        # 3. 策略回测 (最近3个月)
+        # end_dt = datetime.strptime(str(trade_date), "%Y%m%d")
+        # start_dt = end_dt - pd.Timedelta(days=90)
+        # start_date_int = int(start_dt.strftime("%Y%m%d"))
         
-        # 2. Top 100股票
-        top_stocks = scorer.get_top_stocks(trade_date, top_n=100, min_score=0)
-        top_stocks.to_excel(writer, sheet_name='Top100股票', index=False)
-        
-        # 3. 各维度Top 50
-        query_all = f"""
-        SELECT * FROM ads_stock_score_daily WHERE trade_date = {trade_date}
-        """
-        df_all = pd.read_sql(query_all, engine)
-        
-        for score_col in ['momentum_score', 'value_score', 'quality_score', 
-                         'technical_score', 'capital_score', 'chip_score']:
-            df_top = df_all.nlargest(50, score_col)[
-                ['ts_code', score_col, 'total_score', 'rating', 'rank_all']
-            ]
-            sheet_name = score_col.replace('_score', '').capitalize()[:31]
-            df_top.to_excel(writer, sheet_name=sheet_name, index=False)
-        
-        # 4. 行业对比
-        try:
-            industry_stats = analyzer.compare_by_industry(trade_date)
-            if not industry_stats.empty:
-                industry_stats.to_excel(writer, sheet_name='行业对比', index=False)
-        except Exception as e:
-            logger.warning(f"行业对比分析失败: {e}")
-        
-        # 5. 因子相关性
-        try:
-            corr = analyzer.factor_correlation_analysis(trade_date)
-            if not corr.empty:
-                corr.to_excel(writer, sheet_name='因子相关性')
-        except Exception as e:
-            logger.warning(f"相关性分析失败: {e}")
-    
-    logger.info(f"\n分析报告已生成: {output_file}")
+        # df_backtest = analyzer.backtest_score_strategy(start_date_int, trade_date)
+        # if not df_backtest.empty:
+        #     df_backtest.to_excel(writer, sheet_name='近3月回测', index=False)
+
+    logger.info(f"报告生成完成: {os.path.abspath(output_file)}")
     return output_file
 
 
 if __name__ == '__main__':
-    # 示例使用
-    DB_CONFIG = {
-        'host': 'localhost',
-        'port': 3306,
-        'user': 'your_username',
-        'password': 'your_password',
-        'database': 'stock_db',
-        'charset': 'utf8mb4'
-    }
+    # 配置日志
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
     
-    connection_string = (
-        f"mysql+pymysql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
-        f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
-        f"?charset={DB_CONFIG['charset']}"
-    )
-    
+    # 数据库连接
+    connection_string = "mysql+pymysql://root:19871019@localhost:3306/tushare_stock?charset=utf8mb4"
     engine = create_engine(connection_string)
+    
     analyzer = AdvancedAnalyzer(engine)
     
-    # 1. 回测策略
-    # backtest_results = analyzer.backtest_score_strategy(
-    #     start_date=20260101,
-    #     end_date=20260207,
-    #     top_n=50,
-    #     holding_days=20
-    # )
+    # 测试回测 (2025年)
+    # analyzer.backtest_score_strategy(20250101, 20250601)
     
-    # 2. 行业对比
-    # industry_comp = analyzer.compare_by_industry(trade_date=20260207)
+    # 测试行业对比
+    analyzer.compare_by_industry(20260206)
     
-    # 3. 寻找评分上升股票
-    # reversal_stocks = analyzer.find_score_reversal(lookback_days=20)
-    
-    # 4. 自定义筛选
-    # criteria = {
-    #     'total_score': (70, 100),
-    #     'momentum_score': (15, None),
-    #     'pe_ttm': (0, 30)
-    # }
-    # filtered = analyzer.screen_stocks(trade_date=20260207, criteria=criteria)
-    
-    # 5. 生成完整报告
-    # create_score_report(engine, trade_date=20260207)
+    # 测试报告生成
+    # create_score_report(engine, 20260206)
