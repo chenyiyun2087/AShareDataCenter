@@ -41,14 +41,25 @@ class AdvancedAnalyzer:
         return pd.read_sql(text(sql), self.engine, params={"start_date": start_date, "end_date": end_date})
 
     def backtest_score_strategy(self, start_date: int, end_date: int, 
-                                top_n: int = 50, holding_days: int = 20) -> pd.DataFrame:
+                                top_n: int = 50, holding_days: int = 20,
+                                commission: float = 0.0003,  # 佣金率 0.03%
+                                stamp_tax: float = 0.001,    # 印花税 0.1% (卖出)
+                                slippage: float = 0.001) -> pd.DataFrame:
         """
-        回测评分选股策略
+        回测评分选股策略 (修正版)
         
-        策略逻辑：每次调仓选择评分最高的top_n只股票，持有holding_days天
+        修正内容:
+        1. 使用T-1日评分在T日买入 (消除未来函数)
+        2. 过滤T日涨停股 (涨停无法买入)
+        3. 过滤停牌股 (pct_chg为空或0且成交量为0)
+        4. 加入交易成本 (佣金+印花税+滑点)
+        5. 调仓日不计算当日涨跌幅 (开盘买入，收益从T+1开始)
+        
+        策略逻辑：根据T-1日评分，在T日开盘买入top_n只非涨停股票，持有holding_days天
         """
         logger.info(f"开始回测评分策略: {start_date} - {end_date}")
         logger.info(f"参数: Top {top_n} 股票, 持有 {holding_days} 天")
+        logger.info(f"交易成本: 佣金{commission*100:.3f}%, 印花税{stamp_tax*100:.2f}%, 滑点{slippage*100:.2f}%")
         
         # 1. 获取评分数据
         df_scores = self._get_score_data(start_date, end_date)
@@ -56,73 +67,127 @@ class AdvancedAnalyzer:
             logger.warning("未找到评分数据")
             return pd.DataFrame()
         
-        # 2. 获取行情数据 (ods_daily)
+        # 2. 获取行情数据 - 需要包含涨停判断所需字段
         price_sql = """
-        SELECT trade_date, ts_code, close, pct_chg
-        FROM ods_daily
-        WHERE trade_date BETWEEN :start_date AND :end_date
+        SELECT d.trade_date, d.ts_code, d.open, d.close, d.pct_chg, d.vol,
+               CASE 
+                   WHEN (d.ts_code LIKE '688%%' OR d.ts_code LIKE '3%%') AND d.pct_chg >= 19.9 THEN 1
+                   WHEN d.pct_chg >= 9.9 THEN 1
+                   ELSE 0 
+               END AS is_limit_up,
+               CASE 
+                   WHEN (d.ts_code LIKE '688%%' OR d.ts_code LIKE '3%%') AND d.pct_chg <= -19.9 THEN 1
+                   WHEN d.pct_chg <= -9.9 THEN 1
+                   ELSE 0 
+               END AS is_limit_down,
+               CASE WHEN d.vol IS NULL OR d.vol = 0 THEN 1 ELSE 0 END AS is_suspended
+        FROM ods_daily d
+        WHERE d.trade_date BETWEEN :start_date AND :end_date
         """
         df_price = pd.read_sql(text(price_sql), self.engine, params={"start_date": start_date, "end_date": end_date})
         if df_price.empty:
             logger.warning("未找到行情数据")
-            return pd.DataFrame() # Return empty if no price data
+            return pd.DataFrame()
             
         # 合并数据
         df = pd.merge(df_scores, df_price, on=['trade_date', 'ts_code'], how='inner')
         
         # 获取所有交易日
         trade_dates = sorted(df['trade_date'].unique())
+        if len(trade_dates) < 2:
+            logger.warning("交易日不足")
+            return pd.DataFrame()
         
-        results = []
+        # 构建T-1日评分字典: key=日期, value=前一日的评分DataFrame
+        date_to_prev_scores = {}
+        for i in range(1, len(trade_dates)):
+            prev_date = trade_dates[i - 1]
+            curr_date = trade_dates[i]
+            # T-1日的评分用于T日选股
+            prev_scores = df[df['trade_date'] == prev_date][['ts_code', 'total_score']].copy()
+            date_to_prev_scores[curr_date] = prev_scores
+        
         current_portfolio = []
-        buy_date = None
-        next_rebalance_idx = 0
-        
-        # 初始资金1.0
         portfolio_value = 1.0
-        benchmark_value = 1.0
-        
-        # 记录每日净值
         daily_nav = []
+        next_rebalance_idx = 1  # 从第2天开始(需要T-1评分)
         
         for i, date in enumerate(trade_dates):
-            # 每日计算：当前持仓的收益
             day_return = 0.0
+            is_rebalance_day = False
+            transaction_cost = 0.0
             
-            # --- 调仓逻辑 ---
-            # 如果是第一天 或者 到了调仓日
-            if i == next_rebalance_idx:
-                # 选股：当日评分最高的Top N
-                daily_data = df[df['trade_date'] == date]
-                if not daily_data.empty:
-                    top_stocks = daily_data.nlargest(top_n, 'total_score')['ts_code'].tolist()
-                    current_portfolio = top_stocks
-                    buy_date = date
-                    next_rebalance_idx = min(i + holding_days, len(trade_dates) - 1)
-                    if i + holding_days >= len(trade_dates): # 防止越界，但这其实意味着最后一次调仓一直持有到结束
-                         next_rebalance_idx = len(trade_dates) # Ensure logic works
+            # --- 调仓逻辑 (T日使用T-1评分) ---
+            if i == next_rebalance_idx and date in date_to_prev_scores:
+                is_rebalance_day = True
+                prev_scores = date_to_prev_scores[date]
+                
+                # 获取T日行情数据 (判断涨停/停牌)
+                today_data = df[df['trade_date'] == date].copy()
+                
+                # 合并T-1评分与T日行情
+                selection_df = pd.merge(prev_scores, today_data[['ts_code', 'is_limit_up', 'is_suspended']], 
+                                       on='ts_code', how='inner')
+                
+                # 过滤: 不能买入涨停股和停牌股
+                eligible = selection_df[(selection_df['is_limit_up'] == 0) & 
+                                        (selection_df['is_suspended'] == 0)]
+                
+                if not eligible.empty:
+                    # 按T-1评分选股
+                    top_stocks = eligible.nlargest(top_n, 'total_score')['ts_code'].tolist()
                     
-                    logger.info(f"{date}: 调仓，买入 {len(current_portfolio)} 只股票")
+                    # 计算换手成本
+                    old_portfolio = set(current_portfolio)
+                    new_portfolio = set(top_stocks)
+                    
+                    # 卖出成本 (佣金+印花税+滑点)
+                    sell_stocks = old_portfolio - new_portfolio
+                    if old_portfolio:
+                        sell_ratio = len(sell_stocks) / len(old_portfolio) if old_portfolio else 0
+                        sell_cost = sell_ratio * (commission + stamp_tax + slippage)
+                    else:
+                        sell_cost = 0
+                    
+                    # 买入成本 (佣金+滑点)
+                    buy_stocks = new_portfolio - old_portfolio
+                    if new_portfolio:
+                        buy_ratio = len(buy_stocks) / len(new_portfolio) if new_portfolio else 0
+                        buy_cost = buy_ratio * (commission + slippage)
+                    else:
+                        buy_cost = 0
+                    
+                    transaction_cost = sell_cost + buy_cost
+                    
+                    current_portfolio = top_stocks
+                    next_rebalance_idx = min(i + holding_days, len(trade_dates))
+                    
+                    excluded_limit_up = len(selection_df[selection_df['is_limit_up'] == 1])
+                    excluded_suspended = len(selection_df[selection_df['is_suspended'] == 1])
+                    logger.info(f"{date}: 调仓, 买入{len(current_portfolio)}只 (排除涨停{excluded_limit_up}, 停牌{excluded_suspended})")
             
             # --- 收益计算 ---
             if current_portfolio:
-                # 获取持仓股票当日涨跌幅
                 portfolio_data = df[(df['trade_date'] == date) & (df['ts_code'].isin(current_portfolio))]
                 if not portfolio_data.empty:
-                    # 等权重平均涨跌幅
-                    # 注意：这里简化处理，假设每日收盘都能按pct_chg成交，未考虑手续费和滑点
-                    avg_chg = portfolio_data['pct_chg'].mean()
-                    day_return = avg_chg / 100.0
+                    if is_rebalance_day:
+                        # 调仓日: 假设开盘买入, 不享受当日涨跌幅
+                        # 但需要扣除交易成本
+                        day_return = -transaction_cost
+                    else:
+                        # 持仓日: 按pct_chg计算收益
+                        avg_chg = portfolio_data['pct_chg'].mean()
+                        day_return = avg_chg / 100.0
             
             # 更新净值
             portfolio_value *= (1 + day_return)
             
-            # 记录
             daily_nav.append({
                 'trade_date': date,
                 'nav': portfolio_value,
                 'daily_return': day_return,
-                'holdings_count': len(current_portfolio)
+                'holdings_count': len(current_portfolio),
+                'is_rebalance': is_rebalance_day
             })
             
         df_results = pd.DataFrame(daily_nav)
@@ -139,12 +204,17 @@ class AdvancedAnalyzer:
             days = len(trade_dates)
             annual_ret = (1 + total_ret) ** (252 / days) - 1 if days > 0 else 0
             
-            logger.info(f"\n回测结果:")
+            # 计算调仓次数
+            rebalance_count = df_results['is_rebalance'].sum()
+            
+            logger.info(f"\n回测结果 (修正版):")
             logger.info(f"总收益率: {total_ret*100:.2f}%")
             logger.info(f"年化收益: {annual_ret*100:.2f}%")
             logger.info(f"最大回撤: {max_dd*100:.2f}%")
+            logger.info(f"调仓次数: {rebalance_count}")
             
         return df_results
+
     
     def compare_by_industry(self, trade_date: int) -> pd.DataFrame:
         """

@@ -225,7 +225,11 @@ def query_top_stocks(trade_date: int, top_n: int = 50, **db_config):
 if __name__ == '__main__':
     '''
     策略回测 (--backtest)： 回测过去 3 个月评分策略的表现（Top 10 等权重持有）。
-    python score/claude_score/score_query.py --backtest --days 60 --hold 20
+    python score/claude_score/score_query.py --backtest --top N         选股数量 (默认10)
+    --hold N        持仓天数 (默认20)
+    --commission X  佣金率 (默认0.0003=0.03%)
+    --stamp-tax X   印花税 (默认0.001=0.1%)
+    --slippage X    滑点 (默认0.001=0.1%)
     
     行业对比 (--industry)： 查看各行业平均评分排名，发现高分板块。
     python score/claude_score/score_query.py --industry
@@ -249,6 +253,9 @@ if __name__ == '__main__':
     parser.add_argument('--backtest', action='store_true', help='执行策略回测')
     parser.add_argument('--days', type=int, default=90, help='回测天数 (默认90天)')
     parser.add_argument('--hold', type=int, default=20, help='持仓天数 (默认20天)')
+    parser.add_argument('--commission', type=float, default=0.0003, help='佣金率 (默认0.03%%)')
+    parser.add_argument('--stamp-tax', type=float, default=0.001, help='印花税 (默认0.1%%)')
+    parser.add_argument('--slippage', type=float, default=0.001, help='滑点 (默认0.1%%)')
     parser.add_argument('--report', action='store_true', help='生成Excel分析报告')
     
     args = parser.parse_args()
@@ -275,7 +282,10 @@ if __name__ == '__main__':
             start_date=start_date, 
             end_date=trade_date,
             top_n=args.top,
-            holding_days=args.hold
+            holding_days=args.hold,
+            commission=args.commission,
+            stamp_tax=getattr(args, 'stamp_tax'),
+            slippage=args.slippage
         )
         sys.exit(0)
         
