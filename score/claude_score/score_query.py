@@ -210,6 +210,16 @@ def query_top_stocks(trade_date: int, top_n: int = 50, **db_config):
 
 
 if __name__ == '__main__':
+    '''
+    策略回测 (--backtest)： 回测过去 3 个月评分策略的表现（Top 10 等权重持有）。
+    python score/claude_score/score_query.py --backtest
+    
+    行业对比 (--industry)： 查看各行业平均评分排名，发现高分板块。
+    python score/claude_score/score_query.py --industry
+    
+    生成报告 (--report)： 生成 Excel 格式的全方位分析报告（评分、行业、统计等）。
+    python score/claude_score/score_query.py --report
+    '''
     import sys
     import argparse
     import logging
