@@ -40,12 +40,6 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Chunk size in trading days for cyq_chips batch requests (default: 5).",
     )
-    parser.add_argument(
-        "--stk-factor-rate-limit",
-        type=int,
-        default=30,
-        help="Requests per minute for stk_factor (default: 30).",
-    )
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument(
         "--apis",
@@ -453,10 +447,7 @@ def main() -> None:
                 print(f"Progress: trade_date {date_index}/{total_dates} ({trade_date})")
                 print(f"Progress: api {api_index}/{total_apis} ({api_name}) for {trade_date}")
                 try:
-                    # Use specific limiter if available, else default
-                    api_limiter = limiter_map.get(api_name, limiter)
-                    api_limiter.wait()
-                    df = fetcher(pro, api_limiter, trade_date)
+                    df = fetcher(pro, limiter, trade_date)
                 except Exception as exc:
                     print(f"Fetch failed for {api_name} on {trade_date}: {exc}")
                     continue
@@ -476,13 +467,9 @@ def main() -> None:
                 rows, columns = _prepare_rows(api_columns, df, trade_date)
                 if not rows:
                     continue
-                
                 try:
                     with conn.cursor() as cursor:
-                        # Chunking
-                        chunk_size = 500
-                        for i in range(0, len(rows), chunk_size):
-                            upsert_rows(cursor, table, columns, rows[i : i + chunk_size])
+                        upsert_rows(cursor, table, columns, rows)
                         conn.commit()
                 except Exception as exc:
                     conn.rollback()

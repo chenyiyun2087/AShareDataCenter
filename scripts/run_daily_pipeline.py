@@ -5,6 +5,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Override expected latest trade_date (YYYYMMDD).",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable verbose debug output for each step.",
     )
     return parser.parse_args()
 
@@ -61,9 +67,19 @@ def _latest_trade_date() -> Optional[int]:
     return None
 
 
-def _run_step(label: str, cmd: list[str]) -> None:
+def _run_step(label: str, cmd: list[str], debug: bool) -> None:
     print(f"\n[{label}] {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    start = time.perf_counter()
+    try:
+        result = subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as exc:
+        elapsed = time.perf_counter() - start
+        print(f"[{label}] failed in {elapsed:.2f}s with exit code {exc.returncode}")
+        raise
+    elapsed = time.perf_counter() - start
+    if debug:
+        print(f"[{label}] exit code: {result.returncode}")
+    print(f"[{label}] completed in {elapsed:.2f}s")
 
 
 def main() -> None:
@@ -89,18 +105,26 @@ def main() -> None:
     else:
         base_config = []
 
+    if args.debug:
+        print("Debug mode enabled")
+        print(f"Resolved expected_trade_date={expected_trade_date}")
+        print(f"Resolved start_date={start_date} end_date={end_date}")
+        print(f"Resolved rate_limit={rate_limit}")
+
     _run_step(
         "ODS incremental",
         base_cmd
         + ["scripts/run_ods.py", "--mode", "incremental", "--rate-limit", str(rate_limit)]
         + base_config
         + ["--token", token],
+        args.debug,
     )
     _run_step(
         "Check ODS",
         base_cmd
         + ["scripts/check_ods.py", "--expected-trade-date", str(expected_trade_date)]
         + base_config,
+        args.debug,
     )
 
     _run_step(
@@ -121,6 +145,7 @@ def main() -> None:
         ]
         + base_config
         + ["--token", token],
+        args.debug,
     )
     _run_step(
         "Check ODS features",
@@ -134,6 +159,7 @@ def main() -> None:
             "--fail-on-missing",
         ]
         + base_config,
+        args.debug,
     )
 
     if args.fina_start and args.fina_end:
@@ -153,6 +179,7 @@ def main() -> None:
             ]
             + base_config
             + ["--token", token],
+            args.debug,
         )
         _run_step(
             "Check fina status",
@@ -166,9 +193,14 @@ def main() -> None:
                 str(args.fina_end),
             ]
             + base_config,
+            args.debug,
         )
 
-    _run_step("DWD incremental", base_cmd + ["scripts/run_dwd.py", "--mode", "incremental"] + base_config)
+    _run_step(
+        "DWD incremental",
+        base_cmd + ["scripts/run_dwd.py", "--mode", "incremental"] + base_config,
+        args.debug,
+    )
     _run_step(
         "Check DWD",
         base_cmd
@@ -181,9 +213,14 @@ def main() -> None:
             str(expected_trade_date),
         ]
         + base_config,
+        args.debug,
     )
 
-    _run_step("DWS incremental", base_cmd + ["scripts/run_dws.py", "--mode", "incremental"] + base_config)
+    _run_step(
+        "DWS incremental",
+        base_cmd + ["scripts/run_dws.py", "--mode", "incremental"] + base_config,
+        args.debug,
+    )
     _run_step(
         "Check DWS",
         base_cmd
@@ -196,9 +233,14 @@ def main() -> None:
             str(expected_trade_date),
         ]
         + base_config,
+        args.debug,
     )
 
-    _run_step("ADS incremental", base_cmd + ["scripts/run_ads.py", "--mode", "incremental"] + base_config)
+    _run_step(
+        "ADS incremental",
+        base_cmd + ["scripts/run_ads.py", "--mode", "incremental"] + base_config,
+        args.debug,
+    )
     _run_step(
         "Check ADS",
         base_cmd
@@ -211,6 +253,7 @@ def main() -> None:
             str(expected_trade_date),
         ]
         + base_config,
+        args.debug,
     )
 
     print("\nPipeline completed successfully.")
