@@ -31,13 +31,19 @@ def load_dwd_daily(cursor, trade_date: int) -> None:
 
 
 def load_dwd_daily_basic(cursor, trade_date: int) -> None:
+    max_decimal = 999999.999999
     sql = (
         "INSERT INTO dwd_daily_basic (trade_date, ts_code, close, turnover_rate, turnover_rate_f, "
         "volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, "
         "float_share, free_share, total_mv, circ_mv) "
-        "SELECT trade_date, ts_code, close, turnover_rate, turnover_rate_f, volume_ratio, pe, "
-        "pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share, free_share, "
-        "total_mv, circ_mv FROM ods_daily_basic WHERE trade_date = %s "
+        "SELECT trade_date, ts_code, close, turnover_rate, turnover_rate_f, volume_ratio, "
+        "CASE WHEN pe IS NULL OR pe BETWEEN -%s AND %s THEN pe ELSE NULL END AS pe, "
+        "CASE WHEN pe_ttm IS NULL OR pe_ttm BETWEEN -%s AND %s THEN pe_ttm ELSE NULL END AS pe_ttm, "
+        "CASE WHEN pb IS NULL OR pb BETWEEN -%s AND %s THEN pb ELSE NULL END AS pb, "
+        "CASE WHEN ps IS NULL OR ps BETWEEN -%s AND %s THEN ps ELSE NULL END AS ps, "
+        "CASE WHEN ps_ttm IS NULL OR ps_ttm BETWEEN -%s AND %s THEN ps_ttm ELSE NULL END AS ps_ttm, "
+        "dv_ratio, dv_ttm, total_share, float_share, free_share, total_mv, circ_mv "
+        "FROM ods_daily_basic WHERE trade_date = %s "
         "ON DUPLICATE KEY UPDATE "
         "close=VALUES(close), turnover_rate=VALUES(turnover_rate), turnover_rate_f=VALUES(turnover_rate_f), "
         "volume_ratio=VALUES(volume_ratio), pe=VALUES(pe), pe_ttm=VALUES(pe_ttm), pb=VALUES(pb), "
@@ -45,7 +51,22 @@ def load_dwd_daily_basic(cursor, trade_date: int) -> None:
         "total_share=VALUES(total_share), float_share=VALUES(float_share), free_share=VALUES(free_share), "
         "total_mv=VALUES(total_mv), circ_mv=VALUES(circ_mv)"
     )
-    cursor.execute(sql, (trade_date,))
+    cursor.execute(
+        sql,
+        (
+            max_decimal,
+            max_decimal,
+            max_decimal,
+            max_decimal,
+            max_decimal,
+            max_decimal,
+            max_decimal,
+            max_decimal,
+            max_decimal,
+            max_decimal,
+            trade_date,
+        ),
+    )
 
 
 def load_dwd_adj_factor(cursor, trade_date: int) -> None:
