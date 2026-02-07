@@ -67,6 +67,26 @@ def fetch_daily(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
     return call_with_retry(lambda: pro.daily(trade_date=str(trade_date)))
 
 
+def fetch_weekly(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
+    limiter.wait()
+    return call_with_retry(lambda: pro.weekly(trade_date=str(trade_date)))
+
+
+def fetch_monthly(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
+    limiter.wait()
+    return call_with_retry(lambda: pro.monthly(trade_date=str(trade_date)))
+
+
+def fetch_weekly(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
+    limiter.wait()
+    return call_with_retry(lambda: pro.weekly(trade_date=str(trade_date)))
+
+
+def fetch_monthly(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
+    limiter.wait()
+    return call_with_retry(lambda: pro.monthly(trade_date=str(trade_date)))
+
+
 def fetch_daily_basic(pro: ts.pro_api, limiter: RateLimiter, trade_date: int):
     limiter.wait()
     return call_with_retry(lambda: pro.daily_basic(trade_date=str(trade_date)))
@@ -123,6 +143,146 @@ def load_ods_daily(cursor, df) -> None:
     df = df.replace({pd.NA: None, float("nan"): None})
     rows = to_records(df, data_columns)
     upsert_rows(cursor, "ods_daily", db_columns, rows)
+
+
+def load_ods_weekly(cursor, df) -> None:
+    data_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    # NOTE: Reuse the same DB columns as daily, just different table name
+    db_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+    rows = to_records(df, data_columns)
+    upsert_rows(cursor, "ods_weekly", db_columns, rows)
+
+
+def load_ods_monthly(cursor, df) -> None:
+    data_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    # NOTE: Reuse the same DB columns as daily, just different table name
+    db_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+    rows = to_records(df, data_columns)
+    upsert_rows(cursor, "ods_monthly", db_columns, rows)
+
+
+def load_ods_weekly(cursor, df) -> None:
+    data_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    # NOTE: Reuse the same DB columns as daily, just different table name
+    db_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+    rows = to_records(df, data_columns)
+    upsert_rows(cursor, "ods_weekly", db_columns, rows)
+
+
+def load_ods_monthly(cursor, df) -> None:
+    data_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    # NOTE: Reuse the same DB columns as daily, just different table name
+    db_columns = [
+        "trade_date",
+        "ts_code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ]
+    df = df.copy()
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+    rows = to_records(df, data_columns)
+    upsert_rows(cursor, "ods_monthly", db_columns, rows)
 
 
 def load_ods_daily_basic(cursor, df) -> None:
@@ -219,12 +379,18 @@ def run_full(token: str, start_date: int, rate_limit: int = DEFAULT_RATE_LIMIT) 
                     load_ods_daily_basic(cursor, daily_basic)
                     adj_factor = fetch_adj_factor(pro, limiter, trade_date)
                     load_ods_adj_factor(cursor, adj_factor)
+                    weekly = fetch_weekly(pro, limiter, trade_date)
+                    load_ods_weekly(cursor, weekly)
+                    monthly = fetch_monthly(pro, limiter, trade_date)
+                    load_ods_monthly(cursor, monthly)
                     conn.commit()
 
             with conn.cursor() as cursor:
                 ensure_watermark(cursor, "ods_daily", start_date - 1)
                 ensure_watermark(cursor, "ods_daily_basic", start_date - 1)
                 ensure_watermark(cursor, "ods_adj_factor", start_date - 1)
+                ensure_watermark(cursor, "ods_weekly", start_date - 1)
+                ensure_watermark(cursor, "ods_monthly", start_date - 1)
                 conn.commit()
 
             with conn.cursor() as cursor:
@@ -271,11 +437,22 @@ def run_incremental(
                         update_watermark(cursor, "ods_daily", trade_date, "SUCCESS")
                         update_watermark(cursor, "ods_daily_basic", trade_date, "SUCCESS")
                         update_watermark(cursor, "ods_adj_factor", trade_date, "SUCCESS")
+                        
+                        weekly = fetch_weekly(pro, limiter, trade_date)
+                        load_ods_weekly(cursor, weekly)
+                        update_watermark(cursor, "ods_weekly", trade_date, "SUCCESS")
+
+                        monthly = fetch_monthly(pro, limiter, trade_date)
+                        load_ods_monthly(cursor, monthly)
+                        update_watermark(cursor, "ods_monthly", trade_date, "SUCCESS")
+                        
                         conn.commit()
                     except Exception as exc:
                         update_watermark(cursor, "ods_daily", last_date, "FAILED", str(exc))
                         update_watermark(cursor, "ods_daily_basic", last_date, "FAILED", str(exc))
                         update_watermark(cursor, "ods_adj_factor", last_date, "FAILED", str(exc))
+                        update_watermark(cursor, "ods_weekly", last_date, "FAILED", str(exc))
+                        update_watermark(cursor, "ods_monthly", last_date, "FAILED", str(exc))
                         conn.rollback()
                         raise
 
