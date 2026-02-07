@@ -28,6 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", type=int, required=True)
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument(
+        "--fail-on-missing",
+        action="store_true",
+        help="Exit with non-zero status when missing dates are detected.",
+    )
+    parser.add_argument(
         "--tables",
         default="",
         help="Comma-separated table list (default: all feature tables).",
@@ -73,6 +78,7 @@ def main() -> None:
                 d for d in list_trade_dates(cursor, args.start_date) if d <= args.end_date
             ]
 
+        failures: List[str] = []
         for table in tables:
             if table not in FEATURE_TABLES:
                 print(f"Skip unknown table: {table}")
@@ -95,12 +101,15 @@ def main() -> None:
                 )
                 total = cursor.fetchone()[0]
                 if missing_dates:
+                    failures.append(table)
                     print(
                         f"{table}: total_rows={total}, missing_dates={len(missing_dates)} "
                         f"({missing_dates[:10]}{'...' if len(missing_dates) > 10 else ''})"
                     )
                 else:
                     print(f"{table}: total_rows={total}, missing_dates=0")
+        if failures and args.fail_on_missing:
+            raise SystemExit(f"Missing trade dates detected in: {', '.join(failures)}")
 
 
 if __name__ == "__main__":
