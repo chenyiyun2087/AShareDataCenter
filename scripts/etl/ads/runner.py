@@ -126,6 +126,90 @@ def _run_universe(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params)
 
 
+def _run_stock_score(cursor, trade_date: int | None = None) -> None:
+    """Calculate comprehensive stock scores with Z-score normalization and dynamic weights."""
+    filter_sql = ""
+    params = []
+    if trade_date is not None:
+        filter_sql = "WHERE base.trade_date = %s"
+        params.extend([trade_date, trade_date, trade_date, trade_date, trade_date])
+    else:
+        params = []
+    
+    # Use percentile rank for normalization (maps to 0-100 range)
+    sql = f"""
+    INSERT INTO ads_stock_score_daily (
+        trade_date, ts_code, tech_score, capital_score, sentiment_score, chip_score, total_score, score_rank
+    )
+    WITH base_data AS (
+        SELECT
+            tp.trade_date,
+            tp.ts_code,
+            -- Technical indicators (higher is better for momentum)
+            tp.hma_slope,
+            tp.rsi_14,
+            tp.boll_width,
+            -- Capital flow (higher is better)
+            cf.main_net_ratio,
+            cf.vol_price_corr,
+            -- Sentiment (complex - need to normalize)
+            ls.rz_buy_intensity,
+            ls.turnover_spike,
+            -- Chip (lower concentration is better for retail)
+            cd.profit_ratio,
+            cd.chip_peak_cross
+        FROM dws_tech_pattern tp
+        LEFT JOIN dws_capital_flow cf ON cf.trade_date = tp.trade_date AND cf.ts_code = tp.ts_code
+        LEFT JOIN dws_leverage_sentiment ls ON ls.trade_date = tp.trade_date AND ls.ts_code = tp.ts_code
+        LEFT JOIN dws_chip_dynamics cd ON cd.trade_date = tp.trade_date AND cd.ts_code = tp.ts_code
+        {filter_sql}
+    ),
+    ranked_data AS (
+        SELECT
+            trade_date,
+            ts_code,
+            -- Tech score: combine RSI (inverted for overbought), HMA slope, BOLL width
+            (PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY hma_slope) * 50 +
+             PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY CASE WHEN rsi_14 BETWEEN 30 AND 70 THEN 1 ELSE 0 END DESC, rsi_14 DESC) * 30 +
+             PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY boll_width DESC) * 20
+            ) AS tech_score,
+            -- Capital score: combine main_net_ratio and vol_price_corr
+            (PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY main_net_ratio) * 60 +
+             PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY vol_price_corr) * 40
+            ) AS capital_score,
+            -- Sentiment score: moderate leverage is best
+            (PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY rz_buy_intensity) * 50 +
+             PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY CASE WHEN turnover_spike BETWEEN 0.8 AND 2 THEN 1 ELSE 0 END DESC) * 50
+            ) AS sentiment_score,
+            -- Chip score: profit_ratio in mid-range is best
+            (PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY CASE WHEN profit_ratio BETWEEN 0.3 AND 0.7 THEN 1 ELSE 0 END DESC) * 60 +
+             PERCENT_RANK() OVER (PARTITION BY trade_date ORDER BY chip_peak_cross DESC) * 40
+            ) AS chip_score
+        FROM base_data
+    )
+    SELECT
+        trade_date,
+        ts_code,
+        ROUND(tech_score, 6) AS tech_score,
+        ROUND(capital_score, 6) AS capital_score,
+        ROUND(sentiment_score, 6) AS sentiment_score,
+        ROUND(chip_score, 6) AS chip_score,
+        -- Weighted total: tech 40%, capital 25%, sentiment 20%, chip 15%
+        ROUND(tech_score * 0.4 + capital_score * 0.25 + sentiment_score * 0.2 + chip_score * 0.15, 6) AS total_score,
+        RANK() OVER (PARTITION BY trade_date ORDER BY (tech_score * 0.4 + capital_score * 0.25 + sentiment_score * 0.2 + chip_score * 0.15) DESC) AS score_rank
+    FROM ranked_data
+    ON DUPLICATE KEY UPDATE
+        tech_score = VALUES(tech_score),
+        capital_score = VALUES(capital_score),
+        sentiment_score = VALUES(sentiment_score),
+        chip_score = VALUES(chip_score),
+        total_score = VALUES(total_score),
+        score_rank = VALUES(score_rank),
+        updated_at = CURRENT_TIMESTAMP
+    """
+    cursor.execute(sql, params)
+
+
 def run_full(start_date: int) -> None:
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:

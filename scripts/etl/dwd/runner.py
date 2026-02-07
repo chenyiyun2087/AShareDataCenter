@@ -93,6 +93,124 @@ def load_dwd_fina_indicator(cursor, start_date: int, end_date: int) -> None:
     cursor.execute(sql, (start_date, end_date))
 
 
+def load_dwd_stock_daily_standard(cursor, trade_date: int) -> None:
+    """Load standardized price data with front-adjusted prices."""
+    sql = """
+    INSERT INTO dwd_stock_daily_standard (
+        trade_date, ts_code, adj_open, adj_high, adj_low, adj_close,
+        turnover_rate_f, vol, amount
+    )
+    SELECT
+        d.trade_date,
+        d.ts_code,
+        ROUND(d.open * b.base_adj / a.adj_factor, 4) AS adj_open,
+        ROUND(d.high * b.base_adj / a.adj_factor, 4) AS adj_high,
+        ROUND(d.low * b.base_adj / a.adj_factor, 4) AS adj_low,
+        ROUND(d.close * b.base_adj / a.adj_factor, 4) AS adj_close,
+        db.turnover_rate_f,
+        d.vol,
+        d.amount
+    FROM dwd_daily d
+    JOIN dwd_adj_factor a ON a.trade_date = d.trade_date AND a.ts_code = d.ts_code
+    JOIN (
+        SELECT af.ts_code, af.adj_factor AS base_adj
+        FROM dwd_adj_factor af
+        JOIN (SELECT MAX(trade_date) AS base_date FROM dwd_daily) lt
+            ON af.trade_date = lt.base_date
+    ) b ON b.ts_code = d.ts_code
+    LEFT JOIN dwd_daily_basic db ON db.trade_date = d.trade_date AND db.ts_code = d.ts_code
+    WHERE d.trade_date = %s
+    ON DUPLICATE KEY UPDATE
+        adj_open = VALUES(adj_open),
+        adj_high = VALUES(adj_high),
+        adj_low = VALUES(adj_low),
+        adj_close = VALUES(adj_close),
+        turnover_rate_f = VALUES(turnover_rate_f),
+        vol = VALUES(vol),
+        amount = VALUES(amount)
+    """
+    cursor.execute(sql, (trade_date,))
+
+
+def load_dwd_fina_snapshot(cursor, trade_date: int) -> None:
+    """Load daily financial snapshot from PIT data."""
+    sql = """
+    INSERT INTO dwd_fina_snapshot (
+        trade_date, ts_code, roe_ttm, netprofit_margin, grossprofit_margin, debt_to_assets
+    )
+    SELECT
+        %s AS trade_date,
+        f.ts_code,
+        f.roe AS roe_ttm,
+        f.netprofit_margin,
+        f.grossprofit_margin,
+        f.debt_to_assets
+    FROM dws_fina_pit_daily f
+    WHERE f.trade_date = %s
+    ON DUPLICATE KEY UPDATE
+        roe_ttm = VALUES(roe_ttm),
+        netprofit_margin = VALUES(netprofit_margin),
+        grossprofit_margin = VALUES(grossprofit_margin),
+        debt_to_assets = VALUES(debt_to_assets)
+    """
+    cursor.execute(sql, (trade_date, trade_date))
+
+
+def load_dwd_margin_sentiment(cursor, trade_date: int) -> None:
+    """Load margin trading sentiment indicators."""
+    sql = """
+    INSERT INTO dwd_margin_sentiment (
+        trade_date, ts_code, rz_net_buy, rz_net_buy_ratio, rz_change_rate, rq_pressure
+    )
+    SELECT
+        m.trade_date,
+        m.ts_code,
+        (m.rzmre - m.rzche) AS rz_net_buy,
+        CASE WHEN d.amount > 0 THEN (m.rzmre - m.rzche) / (d.amount * 1000) ELSE NULL END AS rz_net_buy_ratio,
+        CASE WHEN lag_m.rzye > 0 THEN (m.rzye - lag_m.rzye) / lag_m.rzye ELSE NULL END AS rz_change_rate,
+        CASE WHEN d.vol > 0 THEN m.rqyl / (d.vol * 100) ELSE NULL END AS rq_pressure
+    FROM ods_margin_detail m
+    JOIN dwd_daily d ON d.trade_date = m.trade_date AND d.ts_code = m.ts_code
+    LEFT JOIN (
+        SELECT ts_code, trade_date, rzye,
+               LAG(rzye) OVER (PARTITION BY ts_code ORDER BY trade_date) AS lag_rzye
+        FROM ods_margin_detail
+    ) lag_m ON lag_m.trade_date = m.trade_date AND lag_m.ts_code = m.ts_code
+    WHERE m.trade_date = %s
+    ON DUPLICATE KEY UPDATE
+        rz_net_buy = VALUES(rz_net_buy),
+        rz_net_buy_ratio = VALUES(rz_net_buy_ratio),
+        rz_change_rate = VALUES(rz_change_rate),
+        rq_pressure = VALUES(rq_pressure)
+    """
+    cursor.execute(sql, (trade_date,))
+
+
+def load_dwd_chip_stability(cursor, trade_date: int) -> None:
+    """Load chip stability indicators from CYQ data."""
+    sql = """
+    INSERT INTO dwd_chip_stability (
+        trade_date, ts_code, avg_cost, winner_rate, chip_concentration, cost_deviation
+    )
+    SELECT
+        c.trade_date,
+        c.ts_code,
+        c.weight_avg AS avg_cost,
+        c.winner_rate,
+        CASE WHEN c.weight_avg > 0 THEN (c.cost_95pct - c.cost_5pct) / c.weight_avg ELSE NULL END AS chip_concentration,
+        CASE WHEN c.weight_avg > 0 THEN (d.close - c.weight_avg) / c.weight_avg ELSE NULL END AS cost_deviation
+    FROM ods_cyq_perf c
+    JOIN dwd_daily d ON d.trade_date = c.trade_date AND d.ts_code = c.ts_code
+    WHERE c.trade_date = %s
+    ON DUPLICATE KEY UPDATE
+        avg_cost = VALUES(avg_cost),
+        winner_rate = VALUES(winner_rate),
+        chip_concentration = VALUES(chip_concentration),
+        cost_deviation = VALUES(cost_deviation)
+    """
+    cursor.execute(sql, (trade_date,))
+
+
 def run_full(start_date: int) -> None:
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:

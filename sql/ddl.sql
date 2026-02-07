@@ -250,44 +250,128 @@ CREATE TABLE IF NOT EXISTS ods_cyq_perf (
 CREATE TABLE IF NOT EXISTS ods_stk_factor (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
-  close DECIMAL(20,4) NULL COMMENT '收盘价',
+  
+  -- 基础行情
   open DECIMAL(20,4) NULL COMMENT '开盘价',
   high DECIMAL(20,4) NULL COMMENT '最高价',
   low DECIMAL(20,4) NULL COMMENT '最低价',
+  close DECIMAL(20,4) NULL COMMENT '收盘价',
   pre_close DECIMAL(20,4) NULL COMMENT '昨收价',
   `change` DECIMAL(20,4) NULL COMMENT '涨跌额',
-  pct_change DECIMAL(12,6) NULL COMMENT '涨跌幅',
+  pct_chg DECIMAL(12,6) NULL COMMENT '涨跌幅',
   vol DECIMAL(20,4) NULL COMMENT '成交量',
   amount DECIMAL(20,4) NULL COMMENT '成交额',
+  turnover_rate DECIMAL(12,6) NULL COMMENT '换手率',
+  turnover_rate_f DECIMAL(12,6) NULL COMMENT '换手率(自由流通)',
+  volume_ratio DECIMAL(12,6) NULL COMMENT '量比',
+  pe DECIMAL(12,6) NULL COMMENT 'PE',
+  pe_ttm DECIMAL(12,6) NULL COMMENT 'PE_TTM',
+  pb DECIMAL(12,6) NULL COMMENT 'PB',
+  ps DECIMAL(12,6) NULL COMMENT 'PS',
+  ps_ttm DECIMAL(12,6) NULL COMMENT 'PS_TTM',
+  dv_ratio DECIMAL(12,6) NULL COMMENT '股息率',
+  dv_ttm DECIMAL(12,6) NULL COMMENT '股息率TTM',
+  total_share DECIMAL(20,4) NULL COMMENT '总股本',
+  float_share DECIMAL(20,4) NULL COMMENT '流通股本',
+  free_share DECIMAL(20,4) NULL COMMENT '自由流通股本',
+  total_mv DECIMAL(20,4) NULL COMMENT '总市值',
+  circ_mv DECIMAL(20,4) NULL COMMENT '流通市值',
   adj_factor DECIMAL(20,4) NULL COMMENT '复权因子',
-  open_hfq DECIMAL(20,4) NULL COMMENT '后复权开盘价',
-  open_qfq DECIMAL(20,4) NULL COMMENT '前复权开盘价',
-  close_hfq DECIMAL(20,4) NULL COMMENT '后复权收盘价',
-  close_qfq DECIMAL(20,4) NULL COMMENT '前复权收盘价',
-  high_hfq DECIMAL(20,4) NULL COMMENT '后复权最高价',
-  high_qfq DECIMAL(20,4) NULL COMMENT '前复权最高价',
-  low_hfq DECIMAL(20,4) NULL COMMENT '后复权最低价',
-  low_qfq DECIMAL(20,4) NULL COMMENT '前复权最低价',
-  pre_close_hfq DECIMAL(20,4) NULL COMMENT '后复权昨收',
-  pre_close_qfq DECIMAL(20,4) NULL COMMENT '前复权昨收',
-  macd_dif DECIMAL(12,6) NULL COMMENT 'MACD_DIF',
-  macd_dea DECIMAL(12,6) NULL COMMENT 'MACD_DEA',
-  macd DECIMAL(12,6) NULL COMMENT 'MACD',
-  kdj_k DECIMAL(12,6) NULL COMMENT 'KDJ_K',
-  kdj_d DECIMAL(12,6) NULL COMMENT 'KDJ_D',
-  kdj_j DECIMAL(12,6) NULL COMMENT 'KDJ_J',
-  rsi_6 DECIMAL(12,6) NULL COMMENT 'RSI_6',
-  rsi_12 DECIMAL(12,6) NULL COMMENT 'RSI_12',
-  rsi_24 DECIMAL(12,6) NULL COMMENT 'RSI_24',
-  boll_upper DECIMAL(20,4) NULL COMMENT 'BOLL_UPPER',
-  boll_mid DECIMAL(20,4) NULL COMMENT 'BOLL_MID',
-  boll_lower DECIMAL(20,4) NULL COMMENT 'BOLL_LOWER',
-  cci DECIMAL(12,6) NULL COMMENT 'CCI',
-  score DECIMAL(12,6) NULL COMMENT '技术评分',
+
+  -- 复权行情 (hfq=后复权, qfq=前复权)
+  open_hfq DECIMAL(20,4) NULL, open_qfq DECIMAL(20,4) NULL,
+  high_hfq DECIMAL(20,4) NULL, high_qfq DECIMAL(20,4) NULL,
+  low_hfq DECIMAL(20,4) NULL, low_qfq DECIMAL(20,4) NULL,
+  close_hfq DECIMAL(20,4) NULL, close_qfq DECIMAL(20,4) NULL,
+  pre_close_hfq DECIMAL(20,4) NULL, pre_close_qfq DECIMAL(20,4) NULL,
+  
+  -- 技术指标 (bfq=不复权, hfq=后复权, qfq=前复权)
+  -- MACD
+  macd_bfq DECIMAL(12,6) NULL, macd_hfq DECIMAL(12,6) NULL, macd_qfq DECIMAL(12,6) NULL,
+  macd_dea_bfq DECIMAL(12,6) NULL, macd_dea_hfq DECIMAL(12,6) NULL, macd_dea_qfq DECIMAL(12,6) NULL,
+  macd_dif_bfq DECIMAL(12,6) NULL, macd_dif_hfq DECIMAL(12,6) NULL, macd_dif_qfq DECIMAL(12,6) NULL,
+  
+  -- KDJ
+  kdj_bfq DECIMAL(12,6) NULL, kdj_hfq DECIMAL(12,6) NULL, kdj_qfq DECIMAL(12,6) NULL,
+  kdj_d_bfq DECIMAL(12,6) NULL, kdj_d_hfq DECIMAL(12,6) NULL, kdj_d_qfq DECIMAL(12,6) NULL,
+  kdj_k_bfq DECIMAL(12,6) NULL, kdj_k_hfq DECIMAL(12,6) NULL, kdj_k_qfq DECIMAL(12,6) NULL,
+  
+  -- RSI
+  rsi_bfq_6 DECIMAL(12,6) NULL, rsi_hfq_6 DECIMAL(12,6) NULL, rsi_qfq_6 DECIMAL(12,6) NULL,
+  rsi_bfq_12 DECIMAL(12,6) NULL, rsi_hfq_12 DECIMAL(12,6) NULL, rsi_qfq_12 DECIMAL(12,6) NULL,
+  rsi_bfq_24 DECIMAL(12,6) NULL, rsi_hfq_24 DECIMAL(12,6) NULL, rsi_qfq_24 DECIMAL(12,6) NULL,
+  
+  -- BOLL
+  boll_upper_bfq DECIMAL(20,4) NULL, boll_upper_hfq DECIMAL(20,4) NULL, boll_upper_qfq DECIMAL(20,4) NULL,
+  boll_mid_bfq DECIMAL(20,4) NULL, boll_mid_hfq DECIMAL(20,4) NULL, boll_mid_qfq DECIMAL(20,4) NULL,
+  boll_lower_bfq DECIMAL(20,4) NULL, boll_lower_hfq DECIMAL(20,4) NULL, boll_lower_qfq DECIMAL(20,4) NULL,
+  
+  -- CCI
+  cci_bfq DECIMAL(12,6) NULL, cci_hfq DECIMAL(12,6) NULL, cci_qfq DECIMAL(12,6) NULL,
+  
+  -- 其他指标 (按首字母排序)
+  asi_bfq DECIMAL(20,4) NULL, asi_hfq DECIMAL(20,4) NULL, asi_qfq DECIMAL(20,4) NULL,
+  asit_bfq DECIMAL(20,4) NULL, asit_hfq DECIMAL(20,4) NULL, asit_qfq DECIMAL(20,4) NULL,
+  atr_bfq DECIMAL(12,6) NULL, atr_hfq DECIMAL(12,6) NULL, atr_qfq DECIMAL(12,6) NULL,
+  bbi_bfq DECIMAL(12,6) NULL, bbi_hfq DECIMAL(12,6) NULL, bbi_qfq DECIMAL(12,6) NULL,
+  bias1_bfq DECIMAL(12,6) NULL, bias1_hfq DECIMAL(12,6) NULL, bias1_qfq DECIMAL(12,6) NULL,
+  bias2_bfq DECIMAL(12,6) NULL, bias2_hfq DECIMAL(12,6) NULL, bias2_qfq DECIMAL(12,6) NULL,
+  bias3_bfq DECIMAL(12,6) NULL, bias3_hfq DECIMAL(12,6) NULL, bias3_qfq DECIMAL(12,6) NULL,
+  brar_ar_bfq DECIMAL(12,6) NULL, brar_ar_hfq DECIMAL(12,6) NULL, brar_ar_qfq DECIMAL(12,6) NULL,
+  brar_br_bfq DECIMAL(12,6) NULL, brar_br_hfq DECIMAL(12,6) NULL, brar_br_qfq DECIMAL(12,6) NULL,
+  cr_bfq DECIMAL(12,6) NULL, cr_hfq DECIMAL(12,6) NULL, cr_qfq DECIMAL(12,6) NULL,
+  dfma_dif_bfq DECIMAL(12,6) NULL, dfma_dif_hfq DECIMAL(12,6) NULL, dfma_dif_qfq DECIMAL(12,6) NULL,
+  dfma_difma_bfq DECIMAL(12,6) NULL, dfma_difma_hfq DECIMAL(12,6) NULL, dfma_difma_qfq DECIMAL(12,6) NULL,
+  dmi_adx_bfq DECIMAL(12,6) NULL, dmi_adx_hfq DECIMAL(12,6) NULL, dmi_adx_qfq DECIMAL(12,6) NULL,
+  dmi_adxr_bfq DECIMAL(12,6) NULL, dmi_adxr_hfq DECIMAL(12,6) NULL, dmi_adxr_qfq DECIMAL(12,6) NULL,
+  dmi_mdi_bfq DECIMAL(12,6) NULL, dmi_mdi_hfq DECIMAL(12,6) NULL, dmi_mdi_qfq DECIMAL(12,6) NULL,
+  dmi_pdi_bfq DECIMAL(12,6) NULL, dmi_pdi_hfq DECIMAL(12,6) NULL, dmi_pdi_qfq DECIMAL(12,6) NULL,
+  dpo_bfq DECIMAL(12,6) NULL, dpo_hfq DECIMAL(12,6) NULL, dpo_qfq DECIMAL(12,6) NULL,
+  madpo_bfq DECIMAL(12,6) NULL, madpo_hfq DECIMAL(12,6) NULL, madpo_qfq DECIMAL(12,6) NULL,
+  emv_bfq DECIMAL(12,6) NULL, emv_hfq DECIMAL(12,6) NULL, emv_qfq DECIMAL(12,6) NULL,
+  maemv_bfq DECIMAL(12,6) NULL, maemv_hfq DECIMAL(12,6) NULL, maemv_qfq DECIMAL(12,6) NULL,
+  ktn_down_bfq DECIMAL(12,6) NULL, ktn_down_hfq DECIMAL(12,6) NULL, ktn_down_qfq DECIMAL(12,6) NULL,
+  ktn_mid_bfq DECIMAL(12,6) NULL, ktn_mid_hfq DECIMAL(12,6) NULL, ktn_mid_qfq DECIMAL(12,6) NULL,
+  ktn_upper_bfq DECIMAL(12,6) NULL, ktn_upper_hfq DECIMAL(12,6) NULL, ktn_upper_qfq DECIMAL(12,6) NULL,
+  mass_bfq DECIMAL(12,6) NULL, mass_hfq DECIMAL(12,6) NULL, mass_qfq DECIMAL(12,6) NULL,
+  ma_mass_bfq DECIMAL(12,6) NULL, ma_mass_hfq DECIMAL(12,6) NULL, ma_mass_qfq DECIMAL(12,6) NULL,
+  mfi_bfq DECIMAL(12,6) NULL, mfi_hfq DECIMAL(12,6) NULL, mfi_qfq DECIMAL(12,6) NULL,
+  mtm_bfq DECIMAL(12,6) NULL, mtm_hfq DECIMAL(12,6) NULL, mtm_qfq DECIMAL(12,6) NULL,
+  mtmma_bfq DECIMAL(12,6) NULL, mtmma_hfq DECIMAL(12,6) NULL, mtmma_qfq DECIMAL(12,6) NULL,
+  obv_bfq DECIMAL(20,4) NULL, obv_hfq DECIMAL(20,4) NULL, obv_qfq DECIMAL(20,4) NULL,
+  psy_bfq DECIMAL(12,6) NULL, psy_hfq DECIMAL(12,6) NULL, psy_qfq DECIMAL(12,6) NULL,
+  psyma_bfq DECIMAL(12,6) NULL, psyma_hfq DECIMAL(12,6) NULL, psyma_qfq DECIMAL(12,6) NULL,
+  roc_bfq DECIMAL(12,6) NULL, roc_hfq DECIMAL(12,6) NULL, roc_qfq DECIMAL(12,6) NULL,
+  maroc_bfq DECIMAL(12,6) NULL, maroc_hfq DECIMAL(12,6) NULL, maroc_qfq DECIMAL(12,6) NULL,
+  taq_down_bfq DECIMAL(12,6) NULL, taq_down_hfq DECIMAL(12,6) NULL, taq_down_qfq DECIMAL(12,6) NULL,
+  taq_mid_bfq DECIMAL(12,6) NULL, taq_mid_hfq DECIMAL(12,6) NULL, taq_mid_qfq DECIMAL(12,6) NULL,
+  taq_up_bfq DECIMAL(12,6) NULL, taq_up_hfq DECIMAL(12,6) NULL, taq_up_qfq DECIMAL(12,6) NULL,
+  trix_bfq DECIMAL(12,6) NULL, trix_hfq DECIMAL(12,6) NULL, trix_qfq DECIMAL(12,6) NULL,
+  trma_bfq DECIMAL(12,6) NULL, trma_hfq DECIMAL(12,6) NULL, trma_qfq DECIMAL(12,6) NULL,
+  vr_bfq DECIMAL(12,6) NULL, vr_hfq DECIMAL(12,6) NULL, vr_qfq DECIMAL(12,6) NULL,
+  wr_bfq DECIMAL(12,6) NULL, wr_hfq DECIMAL(12,6) NULL, wr_qfq DECIMAL(12,6) NULL,
+  wr1_bfq DECIMAL(12,6) NULL, wr1_hfq DECIMAL(12,6) NULL, wr1_qfq DECIMAL(12,6) NULL,
+  xsii_td1_bfq DECIMAL(12,6) NULL, xsii_td1_hfq DECIMAL(12,6) NULL, xsii_td1_qfq DECIMAL(12,6) NULL,
+  xsii_td2_bfq DECIMAL(12,6) NULL, xsii_td2_hfq DECIMAL(12,6) NULL, xsii_td2_qfq DECIMAL(12,6) NULL,
+  xsii_td3_bfq DECIMAL(12,6) NULL, xsii_td3_hfq DECIMAL(12,6) NULL, xsii_td3_qfq DECIMAL(12,6) NULL,
+  xsii_td4_bfq DECIMAL(12,6) NULL, xsii_td4_hfq DECIMAL(12,6) NULL, xsii_td4_qfq DECIMAL(12,6) NULL,
+
+  -- 均线 (MA/EMA/EXPMA) - 这里简化只存部分关键周期，或由用户决定是否全存。
+  -- 鉴于字段限制，我先保留常用周期：5, 10, 20, 60, 250
+  ma_bfq_5 DECIMAL(20,4) NULL, ma_bfq_10 DECIMAL(20,4) NULL, ma_bfq_20 DECIMAL(20,4) NULL, ma_bfq_60 DECIMAL(20,4) NULL, ma_bfq_250 DECIMAL(20,4) NULL,
+  ma_qfq_5 DECIMAL(20,4) NULL, ma_qfq_10 DECIMAL(20,4) NULL, ma_qfq_20 DECIMAL(20,4) NULL, ma_qfq_60 DECIMAL(20,4) NULL, ma_qfq_250 DECIMAL(20,4) NULL,
+  ma_hfq_5 DECIMAL(20,4) NULL, ma_hfq_10 DECIMAL(20,4) NULL, ma_hfq_20 DECIMAL(20,4) NULL, ma_hfq_60 DECIMAL(20,4) NULL, ma_hfq_250 DECIMAL(20,4) NULL,
+  
+  -- 统计天数
+  updays INT NULL COMMENT '连涨天数',
+  downdays INT NULL COMMENT '连跌天数',
+  lowdays INT NULL COMMENT '近期新低天数',
+  topdays INT NULL COMMENT '近期新高天数',
+
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_stk_factor_date (trade_date)
-) ENGINE=InnoDB COMMENT='每日技术指标表';
+) ENGINE=InnoDB COMMENT='股票技术因子表(Pro版)';
 
 --融资融券原始表
 CREATE TABLE IF NOT EXISTS ods_margin_raw (
@@ -407,7 +491,63 @@ CREATE TABLE IF NOT EXISTS dwd_fina_indicator (
   KEY idx_ts_ann (ts_code, ann_date)
 ) ENGINE=InnoDB COMMENT='财务指标事实表';
 
+-- 行情数据标准化表
+CREATE TABLE IF NOT EXISTS dwd_stock_daily_standard (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  adj_open DECIMAL(20,4) NULL COMMENT '前复权开盘价',
+  adj_high DECIMAL(20,4) NULL COMMENT '前复权最高价',
+  adj_low DECIMAL(20,4) NULL COMMENT '前复权最低价',
+  adj_close DECIMAL(20,4) NULL COMMENT '前复权收盘价',
+  turnover_rate_f DECIMAL(12,6) NULL COMMENT '自由流通换手率',
+  vol DECIMAL(20,4) NULL COMMENT '成交量(手)',
+  amount DECIMAL(20,4) NULL COMMENT '成交额(千元)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='行情数据标准化表';
+
+-- 财务指标快照表(按交易日)
+CREATE TABLE IF NOT EXISTS dwd_fina_snapshot (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  roe_ttm DECIMAL(12,6) NULL COMMENT 'ROE(TTM)',
+  netprofit_margin DECIMAL(12,6) NULL COMMENT '净利率',
+  grossprofit_margin DECIMAL(12,6) NULL COMMENT '毛利率',
+  debt_to_assets DECIMAL(12,6) NULL COMMENT '资产负债率',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='财务指标快照表';
+
+-- 融资情绪表
+CREATE TABLE IF NOT EXISTS dwd_margin_sentiment (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  rz_net_buy DECIMAL(20,4) NULL COMMENT '融资净买入(元)',
+  rz_net_buy_ratio DECIMAL(12,6) NULL COMMENT '融资净买入占比',
+  rz_change_rate DECIMAL(12,6) NULL COMMENT '融资余额变化率',
+  rq_pressure DECIMAL(12,6) NULL COMMENT '融券压力',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='融资情绪表';
+
+-- 筹码稳定性表
+CREATE TABLE IF NOT EXISTS dwd_chip_stability (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  avg_cost DECIMAL(20,4) NULL COMMENT '平均成本',
+  winner_rate DECIMAL(12,6) NULL COMMENT '获利比例',
+  chip_concentration DECIMAL(12,6) NULL COMMENT '筹码集中度',
+  cost_deviation DECIMAL(12,6) NULL COMMENT '成本偏离度',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='筹码稳定性表';
+
 -- ========== DWS 主题层 ==========
+
 
 --日线行情主题表
 CREATE TABLE IF NOT EXISTS dws_price_adj_daily (
@@ -438,6 +578,61 @@ CREATE TABLE IF NOT EXISTS dws_fina_pit_daily (
   KEY idx_ts_date (ts_code, trade_date),
   KEY idx_ann_date (ann_date)
 ) ENGINE=InnoDB COMMENT='财务PIT日频主题表';
+
+-- 技术形态主题表
+CREATE TABLE IF NOT EXISTS dws_tech_pattern (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  hma_5 DECIMAL(20,4) NULL COMMENT '5日赫尔移动平均',
+  hma_slope DECIMAL(12,6) NULL COMMENT 'HMA斜率',
+  rsi_14 DECIMAL(12,6) NULL COMMENT '14日RSI',
+  boll_upper DECIMAL(20,4) NULL COMMENT '布林上轨',
+  boll_mid DECIMAL(20,4) NULL COMMENT '布林中轨',
+  boll_lower DECIMAL(20,4) NULL COMMENT '布林下轨',
+  boll_width DECIMAL(12,6) NULL COMMENT '布林带宽',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='技术形态主题表';
+
+-- 资金驱动主题表
+CREATE TABLE IF NOT EXISTS dws_capital_flow (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  main_net_inflow DECIMAL(20,4) NULL COMMENT '主力净流入(万元)',
+  main_net_ratio DECIMAL(12,6) NULL COMMENT '主力净流入占比',
+  main_net_ma5 DECIMAL(12,6) NULL COMMENT '5日主力净流入均值',
+  vol_price_corr DECIMAL(12,6) NULL COMMENT '量价协同因子',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='资金驱动主题表';
+
+-- 情绪杠杆主题表
+CREATE TABLE IF NOT EXISTS dws_leverage_sentiment (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  rz_buy_intensity DECIMAL(12,6) NULL COMMENT '融资买入强度',
+  rz_concentration DECIMAL(12,6) NULL COMMENT '融资集中度',
+  rq_pressure_factor DECIMAL(12,6) NULL COMMENT '融券压力因子',
+  turnover_spike DECIMAL(12,6) NULL COMMENT '换手率异常脉冲',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='情绪杠杆主题表';
+
+-- 筹码分布主题表
+CREATE TABLE IF NOT EXISTS dws_chip_dynamics (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  profit_ratio DECIMAL(12,6) NULL COMMENT '获利比例',
+  profit_pressure DECIMAL(12,6) NULL COMMENT '获利回吐压力',
+  support_strength DECIMAL(12,6) NULL COMMENT '支撑强度',
+  chip_peak_cross DECIMAL(12,6) NULL COMMENT '筹码峰穿越因子',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='筹码分布主题表';
 
 -- ========== ADS 服务层 ==========
 --股票日频因子服务表
@@ -476,6 +671,23 @@ CREATE TABLE IF NOT EXISTS ads_universe_daily (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='每日股票池(交易宇宙)';
+
+-- 股票综合评分表
+CREATE TABLE IF NOT EXISTS ads_stock_score_daily (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  tech_score DECIMAL(12,6) NULL COMMENT '技术形态得分(40%)',
+  capital_score DECIMAL(12,6) NULL COMMENT '资金流向得分(25%)',
+  sentiment_score DECIMAL(12,6) NULL COMMENT '情绪指标得分(20%)',
+  chip_score DECIMAL(12,6) NULL COMMENT '筹码结构得分(15%)',
+  total_score DECIMAL(12,6) NULL COMMENT '综合得分',
+  score_rank INT NULL COMMENT '当日排名',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date),
+  KEY idx_date_rank (trade_date, score_rank)
+) ENGINE=InnoDB COMMENT='股票综合评分表';
+
 
 -- ========== 数据质量校验（日志级） ==========
 CREATE TABLE IF NOT EXISTS meta_quality_check_log (
