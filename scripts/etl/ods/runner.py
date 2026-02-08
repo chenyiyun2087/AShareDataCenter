@@ -356,10 +356,14 @@ def load_ods_fina_indicator(cursor, df) -> None:
     upsert_rows(cursor, "ods_fina_indicator", columns, rows)
 
 
-def fetch_index_daily(pro: ts.pro_api, limiter: RateLimiter, ts_code: str, trade_date: int):
-    """Fetch index daily data for a specific index code and date."""
+def fetch_index_daily_range(pro: ts.pro_api, limiter: RateLimiter, ts_code: str, start_date: int, end_date: int):
+    """Fetch index daily data for a specific index code and date range."""
     limiter.wait()
-    return call_with_retry(lambda: pro.index_daily(ts_code=ts_code, trade_date=str(trade_date)))
+    return call_with_retry(lambda: pro.index_daily(
+        ts_code=ts_code, 
+        start_date=str(start_date), 
+        end_date=str(end_date)
+    ))
 
 
 def load_ods_index_daily(cursor, df) -> None:
@@ -398,27 +402,28 @@ def run_index_daily(
     start_date: int,
     rate_limit: int = DEFAULT_RATE_LIMIT,
 ) -> None:
-    """Fetch index daily data for major indices."""
+    """Fetch index daily data for major indices using batch date range mode."""
     cfg = get_env_config()
     pro = ts.pro_api(token)
     limiter = RateLimiter(rate_limit)
     
+    # Get today's date as end date
+    import datetime
+    end_date = int(datetime.date.today().strftime("%Y%m%d"))
+    
     with get_mysql_connection(cfg) as conn:
-        with conn.cursor() as cursor:
-            trade_dates = list_trade_dates(cursor, start_date)
-        
-        total_dates = len(trade_dates)
-        for idx, trade_date in enumerate(trade_dates, 1):
-            if idx == 1 or idx % 50 == 0 or idx == total_dates:
-                logger.info(f"[{idx}/{total_dates}] Fetching index daily for {trade_date}")
-            
-            for ts_code in INDEX_CODES:
-                df = fetch_index_daily(pro, limiter, ts_code, trade_date)
+        for idx, ts_code in enumerate(INDEX_CODES, 1):
+            logger.info(f"[{idx}/{len(INDEX_CODES)}] Fetching {ts_code} from {start_date} to {end_date}")
+            df = fetch_index_daily_range(pro, limiter, ts_code, start_date, end_date)
+            if df is not None and not df.empty:
+                logger.info(f"  Got {len(df)} records")
                 with conn.cursor() as cursor:
                     load_ods_index_daily(cursor, df)
                     conn.commit()
+            else:
+                logger.warning(f"  No data for {ts_code}")
         
-        logger.info(f"Completed index daily sync for {total_dates} dates")
+        logger.info(f"Completed index daily sync for {len(INDEX_CODES)} indices")
 
 
 def run_full(token: str, start_date: int, rate_limit: int = DEFAULT_RATE_LIMIT) -> None:

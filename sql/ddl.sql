@@ -601,7 +601,7 @@ CREATE TABLE IF NOT EXISTS dws_capital_flow (
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
   main_net_inflow DECIMAL(20,4) NULL COMMENT '主力净流入(万元)',
   main_net_ratio DECIMAL(12,6) NULL COMMENT '主力净流入占比',
-  main_net_ma5 DECIMAL(12,6) NULL COMMENT '5日主力净流入均值',
+  main_net_ma5 DECIMAL(20,4) NULL COMMENT '5日主力净流入均值',
   vol_price_corr DECIMAL(12,6) NULL COMMENT '量价协同因子',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (trade_date, ts_code),
