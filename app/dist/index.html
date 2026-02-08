@@ -1,13 +1,573 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ETL Console</title>
-    <script type="module" crossorigin src="./assets/index-DWL3yc8l.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Be8M-FPf.css">
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AShare 数据中心 - 管理后台</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-500: #6b7280;
+            --gray-700: #374151;
+            --gray-900: #111827;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--gray-100);
+            color: var(--gray-900);
+            line-height: 1.5;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .nav {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.5rem;
+        }
+
+        .nav button {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        .nav button:hover,
+        .nav button.active {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        .card {
+            background: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .status-item {
+            padding: 1rem;
+            background: var(--gray-50);
+            border-radius: 0.5rem;
+            border-left: 4px solid var(--gray-200);
+        }
+
+        .status-item.ready {
+            border-left-color: var(--success);
+        }
+
+        .status-item.pending {
+            border-left-color: var(--warning);
+        }
+
+        .status-item .name {
+            font-weight: 500;
+            color: var(--gray-700);
+        }
+
+        .status-item .info {
+            font-size: 0.875rem;
+            color: var(--gray-500);
+            margin-top: 0.25rem;
+        }
+
+        .status-item .date {
+            font-size: 0.875rem;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+
+        th,
+        td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        th {
+            background: var(--gray-50);
+            font-weight: 600;
+            color: var(--gray-700);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th:hover {
+            background: var(--gray-100);
+        }
+
+        th.sorted-asc::after {
+            content: ' ▲';
+            font-size: 0.75rem;
+        }
+
+        th.sorted-desc::after {
+            content: ' ▼';
+            font-size: 0.75rem;
+        }
+
+        tr:hover {
+            background: var(--gray-50);
+        }
+
+        .score-high {
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .score-mid {
+            color: var(--warning);
+            font-weight: 500;
+        }
+
+        .score-low {
+            color: var(--gray-500);
+        }
+
+        .pct-up {
+            color: var(--danger);
+        }
+
+        .pct-down {
+            color: var(--success);
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        input,
+        select,
+        button {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--gray-200);
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+        }
+
+        button.primary {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+            cursor: pointer;
+        }
+
+        button.primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .pagination {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-top: 1rem;
+        }
+
+        .pagination button {
+            min-width: 2.5rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: var(--gray-500);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            border-radius: 1rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-danger {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .etl-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .etl-btn {
+            padding: 1rem;
+            background: var(--gray-50);
+            border: 1px solid var(--gray-200);
+            border-radius: 0.5rem;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .etl-btn:hover {
+            background: var(--gray-100);
+            border-color: var(--primary);
+        }
+
+        .etl-btn .icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>📊 AShare 数据中心</h1>
+        <div class="nav">
+            <button class="active" onclick="showSection('status')">📈 数据状态</button>
+            <button onclick="showSection('scores')">🏆 股票评分</button>
+            <button onclick="showSection('etl')">⚙️ ETL管理</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 数据状态 -->
+        <div id="section-status" class="section active">
+            <div class="card">
+                <div class="card-title">📊 数据层状态</div>
+                <div id="status-content" class="loading">加载中...</div>
+            </div>
+        </div>
+
+        <!-- 股票评分 -->
+        <div id="section-scores" class="section">
+            <div class="card">
+                <div class="card-title">🏆 股票评分排行</div>
+                <div class="controls">
+                    <label>交易日: <input type="text" id="score-date" placeholder="20260206" size="10"></label>
+                    <label>评分系统:
+                        <select id="score-type" onchange="loadScores()">
+                            <option value="claude">Claude Score</option>
+                            <option value="fama">Fama Score</option>
+                        </select>
+                    </label>
+                    <label>股票代码: <input type="text" id="score-ts-code" placeholder="000001" size="10"></label>
+                    <button class="primary" onclick="loadScores()">查询</button>
+                </div>
+                <div id="scores-content" class="loading">选择交易日后点击查询</div>
+            </div>
+        </div>
+
+        <!-- ETL管理 -->
+        <div id="section-etl" class="section">
+            <div class="card">
+                <div class="card-title">⚙️ ETL 任务管理</div>
+                <div class="etl-grid">
+                    <div class="etl-btn" onclick="runEtl('base', 'incremental')">
+                        <div class="icon">📋</div>
+                        <div>Base 维表</div>
+                        <small>日历/股票维度</small>
+                    </div>
+                    <div class="etl-btn" onclick="runEtl('ods', 'incremental')">
+                        <div class="icon">📥</div>
+                        <div>ODS 原始层</div>
+                        <small>日线/指标/因子</small>
+                    </div>
+                    <div class="etl-btn" onclick="runEtl('dwd', 'incremental')">
+                        <div class="icon">🔄</div>
+                        <div>DWD 明细层</div>
+                        <small>标准化宽表</small>
+                    </div>
+                    <div class="etl-btn" onclick="runEtl('dws', 'incremental')">
+                        <div class="icon">📊</div>
+                        <div>DWS 主题层</div>
+                        <small>评分计算</small>
+                    </div>
+                    <div class="etl-btn" onclick="runEtl('ads', 'incremental')">
+                        <div class="icon">🎯</div>
+                        <div>ADS 应用层</div>
+                        <small>最终特征</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">📜 任务历史</div>
+                <div id="history-content" class="loading">加载中...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+        let currentSort = { field: 'total_score', order: 'desc' };
+        let currentPage = 1;
+
+        function showSection(name) {
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+            document.getElementById('section-' + name).classList.add('active');
+            event.target.classList.add('active');
+
+            if (name === 'status') loadStatus();
+            if (name === 'etl') loadHistory();
+        }
+
+        async function loadStatus() {
+            try {
+                const res = await fetch(API_BASE + '/data/status');
+                const data = await res.json();
+
+                if (data.error) throw new Error(data.error);
+
+                const status = data.data;
+                let html = '<div class="status-grid">';
+
+                // ODS
+                html += '<div><h4 style="margin-bottom:0.5rem">📥 ODS 原始层</h4>';
+                for (const item of status.ods) {
+                    html += `<div class="status-item ${item.ready ? 'ready' : 'pending'}">
+                        <div class="name">${item.name}</div>
+                        <div class="info">${item.table} | ${item.row_count?.toLocaleString()} 行</div>
+                        <div class="date">最新: ${item.latest_date || '-'}</div>
+                    </div>`;
+                }
+                html += '</div>';
+
+                // DWS
+                html += '<div><h4 style="margin-bottom:0.5rem">📊 DWS 评分层</h4>';
+                for (const item of status.dws) {
+                    html += `<div class="status-item ${item.ready ? 'ready' : 'pending'}">
+                        <div class="name">${item.name}</div>
+                        <div class="info">${item.table} | ${item.row_count?.toLocaleString()} 行</div>
+                        <div class="date">最新: ${item.latest_date || '-'}</div>
+                    </div>`;
+                }
+                html += '</div>';
+
+                html += '</div>';
+                document.getElementById('status-content').innerHTML = html;
+            } catch (e) {
+                document.getElementById('status-content').innerHTML = '加载失败: ' + e.message;
+            }
+        }
+
+        async function loadScores() {
+            const date = document.getElementById('score-date').value;
+            const type = document.getElementById('score-type').value;
+            const tsCode = document.getElementById('score-ts-code').value;
+
+            const params = new URLSearchParams({
+                type,
+                sort_by: currentSort.field,
+                sort_order: currentSort.order,
+                page: currentPage,
+                page_size: 50
+            });
+            if (date) params.append('trade_date', date);
+            if (tsCode) params.append('ts_code', tsCode);
+
+            try {
+                document.getElementById('scores-content').innerHTML = '<div class="loading">加载中...</div>';
+                const res = await fetch(API_BASE + '/scores?' + params);
+                const data = await res.json();
+
+                if (data.error) throw new Error(data.error);
+
+                const { columns, rows, total, page, page_size, trade_date } = data.data;
+
+                if (!document.getElementById('score-date').value && trade_date) {
+                    document.getElementById('score-date').value = trade_date;
+                }
+
+                let html = `<p style="margin-bottom:1rem">交易日: <strong>${trade_date}</strong> | 共 ${total} 条</p>`;
+                html += '<table><thead><tr>';
+                html += '<th>排名</th>';
+
+                const displayCols = ['ts_code', 'name', 'pct_chg', 'momentum_score', 'value_score', 'quality_score', 'technical_score', 'capital_score', 'chip_score', 'total_score'];
+                const colNames = { ts_code: '代码', name: '名称', pct_chg: '涨跌%', momentum_score: '动量', value_score: '价值', quality_score: '质量', technical_score: '技术', capital_score: '资金', chip_score: '筹码', total_score: '总分' };
+
+                for (const col of displayCols) {
+                    const sortClass = currentSort.field === col ? `sorted-${currentSort.order}` : '';
+                    html += `<th class="${sortClass}" onclick="sortBy('${col}')">${colNames[col] || col}</th>`;
+                }
+                html += '</tr></thead><tbody>';
+
+                rows.forEach((row, i) => {
+                    html += '<tr>';
+                    html += `<td>${(page - 1) * page_size + i + 1}</td>`;
+                    for (const col of displayCols) {
+                        const idx = columns.indexOf(col);
+                        let val = idx >= 0 ? row[idx] : null;
+                        let cls = '';
+
+                        if (col === 'pct_chg' && val !== null && typeof val === 'number') {
+                            cls = val > 0 ? 'pct-up' : (val < 0 ? 'pct-down' : '');
+                            val = val.toFixed(2) + '%';
+                        } else if (col === 'total_score' && val !== null && typeof val === 'number') {
+                            cls = val >= 60 ? 'score-high' : (val >= 40 ? 'score-mid' : 'score-low');
+                            val = val.toFixed(1);
+                        } else if (col.endsWith('_score') && val !== null && typeof val === 'number') {
+                            val = val.toFixed(1);
+                        }
+
+                        html += `<td class="${cls}">${val !== null ? val : '-'}</td>`;
+                    }
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+
+                // 分页
+                const totalPages = Math.ceil(total / page_size);
+                html += '<div class="pagination">';
+                html += `<button ${page <= 1 ? 'disabled' : ''} onclick="goPage(${page - 1})">上一页</button>`;
+                html += `<span style="padding:0.5rem">第 ${page} / ${totalPages} 页</span>`;
+                html += `<button ${page >= totalPages ? 'disabled' : ''} onclick="goPage(${page + 1})">下一页</button>`;
+                html += '</div>';
+
+                document.getElementById('scores-content').innerHTML = html;
+            } catch (e) {
+                document.getElementById('scores-content').innerHTML = '加载失败: ' + e.message;
+            }
+        }
+
+        function sortBy(field) {
+            if (currentSort.field === field) {
+                currentSort.order = currentSort.order === 'desc' ? 'asc' : 'desc';
+            } else {
+                currentSort.field = field;
+                currentSort.order = 'desc';
+            }
+            loadScores();
+        }
+
+        function goPage(page) {
+            currentPage = page;
+            loadScores();
+        }
+
+        async function runEtl(layer, mode) {
+            if (!confirm(`确定运行 ${layer.toUpperCase()} ${mode} 任务?`)) return;
+
+            try {
+                const res = await fetch(API_BASE + '/tasks/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ layer, mode })
+                });
+                const data = await res.json();
+                alert(data.message || data.error);
+                loadHistory();
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        async function loadHistory() {
+            try {
+                const res = await fetch(API_BASE + '/tasks/history?limit=20');
+                const data = await res.json();
+
+                if (!data.data || !data.data.length) {
+                    document.getElementById('history-content').innerHTML = '暂无记录';
+                    return;
+                }
+
+                let html = '<table><thead><tr><th>API</th><th>类型</th><th>开始时间</th><th>结束时间</th><th>状态</th></tr></thead><tbody>';
+                for (const log of data.data) {
+                    const statusBadge = log.status === 'success' ? 'badge-success' : (log.status === 'running' ? 'badge-warning' : 'badge-danger');
+                    html += `<tr>
+                        <td>${log.api}</td>
+                        <td>${log.type}</td>
+                        <td>${log.start_time || '-'}</td>
+                        <td>${log.end_time || '-'}</td>
+                        <td><span class="badge ${statusBadge}">${log.status}</span></td>
+                    </tr>`;
+                }
+                html += '</tbody></table>';
+                document.getElementById('history-content').innerHTML = html;
+            } catch (e) {
+                document.getElementById('history-content').innerHTML = '加载失败: ' + e.message;
+            }
+        }
+
+        // 初始加载
+        loadStatus();
+    </script>
+</body>
+
 </html>

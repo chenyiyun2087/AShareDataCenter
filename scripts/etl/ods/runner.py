@@ -356,6 +356,71 @@ def load_ods_fina_indicator(cursor, df) -> None:
     upsert_rows(cursor, "ods_fina_indicator", columns, rows)
 
 
+def fetch_index_daily(pro: ts.pro_api, limiter: RateLimiter, ts_code: str, trade_date: int):
+    """Fetch index daily data for a specific index code and date."""
+    limiter.wait()
+    return call_with_retry(lambda: pro.index_daily(ts_code=ts_code, trade_date=str(trade_date)))
+
+
+def load_ods_index_daily(cursor, df) -> None:
+    """Load index daily data into ods_index_daily table."""
+    if df is None or df.empty:
+        return
+    columns = [
+        "trade_date", "ts_code", "open", "high", "low", "close", 
+        "pre_close", "pct_chg", "vol", "amount"
+    ]
+    df = df.copy()
+    # Rename change to pct_chg if needed
+    if "change" in df.columns and "pct_chg" not in df.columns:
+        df["pct_chg"] = df["change"]
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+    rows = to_records(df, columns)
+    upsert_rows(cursor, "ods_index_daily", columns, rows)
+
+
+# Major index codes for fetching
+INDEX_CODES = [
+    "000300.SH",  # 沪深300
+    "000001.SH",  # 上证指数
+    "399001.SZ",  # 深证成指
+    "399006.SZ",  # 创业板指
+    "000688.SH",  # 科创50
+]
+
+
+def run_index_daily(
+    token: str,
+    start_date: int,
+    rate_limit: int = DEFAULT_RATE_LIMIT,
+) -> None:
+    """Fetch index daily data for major indices."""
+    cfg = get_env_config()
+    pro = ts.pro_api(token)
+    limiter = RateLimiter(rate_limit)
+    
+    with get_mysql_connection(cfg) as conn:
+        with conn.cursor() as cursor:
+            trade_dates = list_trade_dates(cursor, start_date)
+        
+        total_dates = len(trade_dates)
+        for idx, trade_date in enumerate(trade_dates, 1):
+            if idx == 1 or idx % 50 == 0 or idx == total_dates:
+                logger.info(f"[{idx}/{total_dates}] Fetching index daily for {trade_date}")
+            
+            for ts_code in INDEX_CODES:
+                df = fetch_index_daily(pro, limiter, ts_code, trade_date)
+                with conn.cursor() as cursor:
+                    load_ods_index_daily(cursor, df)
+                    conn.commit()
+        
+        logger.info(f"Completed index daily sync for {total_dates} dates")
+
+
 def run_full(token: str, start_date: int, rate_limit: int = DEFAULT_RATE_LIMIT) -> None:
     cfg = get_env_config()
     limiter = RateLimiter(rate_limit)

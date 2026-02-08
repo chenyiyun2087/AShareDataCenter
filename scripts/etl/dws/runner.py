@@ -20,6 +20,12 @@ from .scoring import (
     _run_capital_score,
     _run_chip_score,
 )
+from .enhanced_factors import (
+    run_liquidity_factor,
+    run_momentum_extended,
+    run_quality_extended,
+    run_risk_factor,
+)
 
 
 def _run_price_adj(cursor, trade_date: int | None = None) -> None:
@@ -391,8 +397,17 @@ def run_incremental() -> None:
                         _run_technical_score(cursor, trade_date)
                         logging.info("  [11/12] Running dws_capital_score...")
                         _run_capital_score(cursor, trade_date)
-                        logging.info("  [12/12] Running dws_chip_score...")
+                        logging.info("  [12/16] Running dws_chip_score...")
                         _run_chip_score(cursor, trade_date)
+                        # Enhanced factors (Phase 1)
+                        logging.info("  [13/16] Running dws_liquidity_factor...")
+                        run_liquidity_factor(cursor, trade_date)
+                        logging.info("  [14/16] Running dws_momentum_extended...")
+                        run_momentum_extended(cursor, trade_date)
+                        logging.info("  [15/16] Running dws_quality_extended...")
+                        run_quality_extended(cursor, trade_date)
+                        logging.info("  [16/16] Running dws_risk_factor...")
+                        run_risk_factor(cursor, trade_date)
                         update_watermark(cursor, "dws", trade_date, "SUCCESS")
                         conn.commit()
                         logging.info(f"  Completed trade_date={trade_date}")

@@ -230,6 +230,7 @@ def main() -> None:
         TableCheck("dwd_fina_snapshot", "trade_date", "dwd"),
         TableCheck("dwd_margin_sentiment", "trade_date", "dwd"),
         TableCheck("dwd_chip_stability", "trade_date", "dwd"),
+        TableCheck("dwd_stock_label_daily", "trade_date", "dwd"),
     ]
     dws_tables = [
         TableCheck("dws_price_adj_daily", "trade_date", "dws"),
@@ -238,6 +239,11 @@ def main() -> None:
         TableCheck("dws_capital_flow", "trade_date", "dws"),
         TableCheck("dws_leverage_sentiment", "trade_date", "dws"),
         TableCheck("dws_chip_dynamics", "trade_date", "dws"),
+        # Enhanced factors
+        TableCheck("dws_liquidity_factor", "trade_date", "dws"),
+        TableCheck("dws_momentum_extended", "trade_date", "dws"),
+        TableCheck("dws_quality_extended", "trade_date", "dws"),
+        TableCheck("dws_risk_factor", "trade_date", "dws"),
     ]
     ads_tables = [
         TableCheck("ads_features_stock_daily", "trade_date", "ads"),

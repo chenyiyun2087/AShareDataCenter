@@ -212,6 +212,53 @@ def load_dwd_chip_stability(cursor, trade_date: int) -> None:
     cursor.execute(sql, (trade_date,))
 
 
+def load_dwd_stock_label_daily(cursor, trade_date: int) -> None:
+    """Load daily stock labels: ST, new stock, limit type, market."""
+    sql = """
+    INSERT INTO dwd_stock_label_daily (
+        trade_date, ts_code, name, is_st, is_new, limit_type, market, industry
+    )
+    SELECT
+        %s AS trade_date,
+        s.ts_code,
+        s.name,
+        -- ST判断: 名称包含ST或*ST
+        CASE WHEN s.name LIKE '%%ST%%' OR s.name LIKE '%%*ST%%' THEN 1 ELSE 0 END AS is_st,
+        -- 次新股: 上市不足60个交易日
+        CASE WHEN s.list_date IS NOT NULL AND DATEDIFF(
+            STR_TO_DATE(CAST(%s AS CHAR), '%%Y%%m%%d'),
+            STR_TO_DATE(CAST(s.list_date AS CHAR), '%%Y%%m%%d')
+        ) < 60 THEN 1 ELSE 0 END AS is_new,
+        -- 涨跌幅限制类型
+        CASE 
+            WHEN s.ts_code LIKE '68%%' THEN 20    -- 科创板 20%
+            WHEN s.ts_code LIKE '30%%' THEN 20    -- 创业板 20%
+            WHEN s.ts_code LIKE '8%%' OR s.ts_code LIKE '4%%' THEN 30  -- 北交所 30%
+            ELSE 10  -- 主板 10%
+        END AS limit_type,
+        -- 市场类型
+        CASE 
+            WHEN s.ts_code LIKE '68%%' THEN '科创板'
+            WHEN s.ts_code LIKE '30%%' THEN '创业板'
+            WHEN s.ts_code LIKE '8%%' OR s.ts_code LIKE '4%%' THEN '北交所'
+            WHEN s.ts_code LIKE '60%%' THEN '沪主板'
+            WHEN s.ts_code LIKE '00%%' THEN '深主板'
+            ELSE '其他'
+        END AS market,
+        s.industry
+    FROM dim_stock s
+    WHERE s.ts_code IN (SELECT DISTINCT ts_code FROM dwd_daily WHERE trade_date = %s)
+    ON DUPLICATE KEY UPDATE
+        name = VALUES(name),
+        is_st = VALUES(is_st),
+        is_new = VALUES(is_new),
+        limit_type = VALUES(limit_type),
+        market = VALUES(market),
+        industry = VALUES(industry)
+    """
+    cursor.execute(sql, (trade_date, trade_date, trade_date))
+
+
 def run_full(start_date: int) -> None:
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
@@ -237,6 +284,7 @@ def run_full(start_date: int) -> None:
                     load_dwd_fina_snapshot(cursor, trade_date)
                     load_dwd_margin_sentiment(cursor, trade_date)
                     load_dwd_chip_stability(cursor, trade_date)
+                    load_dwd_stock_label_daily(cursor, trade_date)
                     conn.commit()
             
             logging.info("All DWD tables updated successfully")
@@ -301,6 +349,7 @@ def run_incremental() -> None:
                         load_dwd_fina_snapshot(cursor, trade_date)
                         load_dwd_margin_sentiment(cursor, trade_date)
                         load_dwd_chip_stability(cursor, trade_date)
+                        load_dwd_stock_label_daily(cursor, trade_date)
                         update_watermark(cursor, "dwd_daily", trade_date, "SUCCESS")
                         update_watermark(cursor, "dwd_daily_basic", trade_date, "SUCCESS")
                         update_watermark(cursor, "dwd_adj_factor", trade_date, "SUCCESS")

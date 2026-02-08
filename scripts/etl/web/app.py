@@ -391,3 +391,374 @@ def api_ods_rows():
         )
     except Exception as exc:
         return _json_error(str(exc))
+
+
+# ============== 数据状态 API ==============
+
+@app.route("/api/data/status", methods=["GET"])
+def api_data_status():
+    """获取各层数据就绪状态"""
+    try:
+        cfg = get_env_config()
+        status = {}
+        
+        with get_mysql_connection(cfg) as conn:
+            with conn.cursor() as cursor:
+                # ODS层状态
+                ods_tables = [
+                    ("ods_daily", "ODS日线数据"),
+                    ("ods_daily_basic", "ODS每日指标"),
+                    ("ods_stk_factor", "ODS技术因子"),
+                    ("ods_moneyflow", "ODS资金流向"),
+                    ("ods_margin_detail", "ODS融资融券"),
+                    ("ods_cyq_perf", "ODS筹码指标"),
+                ]
+                ods_status = []
+                for table, name in ods_tables:
+                    cursor.execute(f"""
+                        SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*)
+                        FROM {table}
+                    """)
+                    row = cursor.fetchone()
+                    ods_status.append({
+                        "table": table,
+                        "name": name,
+                        "latest_date": row[0],
+                        "date_count": row[1],
+                        "row_count": row[2],
+                        "ready": row[0] is not None
+                    })
+                status["ods"] = ods_status
+                
+                # DWD层状态
+                cursor.execute("""
+                    SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*)
+                    FROM dwd_daily_basic
+                """)
+                row = cursor.fetchone()
+                status["dwd"] = {
+                    "latest_date": row[0],
+                    "date_count": row[1],
+                    "row_count": row[2],
+                    "ready": row[0] is not None
+                }
+                
+                # DWS层状态 (评分表)
+                dws_tables = [
+                    ("dws_momentum_score", "动量评分"),
+                    ("dws_value_score", "价值评分"),
+                    ("dws_quality_score", "质量评分"),
+                    ("dws_technical_score", "技术评分"),
+                    ("dws_capital_score", "资金评分"),
+                    ("dws_chip_score", "筹码评分"),
+                ]
+                dws_status = []
+                for table, name in dws_tables:
+                    cursor.execute(f"""
+                        SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*)
+                        FROM {table}
+                    """)
+                    row = cursor.fetchone()
+                    dws_status.append({
+                        "table": table,
+                        "name": name,
+                        "latest_date": row[0],
+                        "date_count": row[1],
+                        "row_count": row[2],
+                        "ready": row[0] is not None
+                    })
+                status["dws"] = dws_status
+                
+                # 获取最新交易日
+                cursor.execute("SELECT MAX(trade_date) FROM ods_daily")
+                status["latest_trade_date"] = cursor.fetchone()[0]
+        
+        return jsonify({"data": status})
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+# ============== 股票评分 API ==============
+
+@app.route("/api/scores", methods=["GET"])
+def api_scores():
+    """获取股票评分，支持排序和分页"""
+    try:
+        trade_date = request.args.get("trade_date")
+        sort_by = request.args.get("sort_by", "total_score")
+        sort_order = request.args.get("sort_order", "desc")
+        page = int(request.args.get("page", 1))
+        page_size = int(request.args.get("page_size", 50))
+        search_ts_code = request.args.get("ts_code") or None
+        score_type = request.args.get("type", "claude")  # claude or fama
+        
+        cfg = get_env_config()
+        
+        # 验证排序字段
+        valid_sort_fields = [
+            "ts_code", "name", "pct_chg",
+            "momentum_score", "value_score", "quality_score", 
+            "technical_score", "capital_score", "chip_score", 
+            "total_score", "size_score"
+        ]
+        if sort_by not in valid_sort_fields:
+            sort_by = "total_score"
+        
+        sort_direction = "DESC" if sort_order.lower() == "desc" else "ASC"
+        
+        with get_mysql_connection(cfg) as conn:
+            with conn.cursor() as cursor:
+                # 获取最新交易日
+                if not trade_date:
+                    cursor.execute("SELECT MAX(trade_date) FROM dws_momentum_score")
+                    trade_date = cursor.fetchone()[0]
+                else:
+                    trade_date = int(trade_date)
+                
+                if not trade_date:
+                    return jsonify({"data": {"rows": [], "total": 0, "trade_date": None}})
+                
+                # 构建查询 SQL
+                if score_type == "fama":
+                    base_sql = """
+                    SELECT 
+                        s.ts_code, ds.name, od.pct_chg,
+                        s.size_score,
+                        m.momentum_score, v.value_score, q.quality_score,
+                        t.technical_score, c.capital_score, ch.chip_score,
+                        (COALESCE(s.size_score, 0) + COALESCE(m.momentum_score, 0) + 
+                         COALESCE(v.value_score, 0) + COALESCE(q.quality_score, 0) + 
+                         COALESCE(t.technical_score, 0) + COALESCE(c.capital_score, 0) + 
+                         COALESCE(ch.chip_score, 0)) AS total_score
+                    FROM dws_fama_size_score s
+                    LEFT JOIN dws_fama_momentum_score m ON s.trade_date = m.trade_date AND s.ts_code = m.ts_code
+                    LEFT JOIN dws_fama_value_score v ON s.trade_date = v.trade_date AND s.ts_code = v.ts_code
+                    LEFT JOIN dws_fama_quality_score q ON s.trade_date = q.trade_date AND s.ts_code = q.ts_code
+                    LEFT JOIN dws_fama_technical_score t ON s.trade_date = t.trade_date AND s.ts_code = t.ts_code
+                    LEFT JOIN dws_fama_capital_score c ON s.trade_date = c.trade_date AND s.ts_code = c.ts_code
+                    LEFT JOIN dws_fama_chip_score ch ON s.trade_date = ch.trade_date AND s.ts_code = ch.ts_code
+                    LEFT JOIN ods_daily od ON s.trade_date = od.trade_date AND s.ts_code = od.ts_code
+                    LEFT JOIN dim_stock ds ON s.ts_code = ds.ts_code
+                    WHERE s.trade_date = %s
+                    """
+                else:
+                    base_sql = """
+                    SELECT 
+                        m.ts_code, ds.name, od.pct_chg,
+                        NULL AS size_score,
+                        m.momentum_score, v.value_score, q.quality_score,
+                        t.technical_score, c.capital_score, ch.chip_score,
+                        (COALESCE(m.momentum_score, 0) + COALESCE(v.value_score, 0) + 
+                         COALESCE(q.quality_score, 0) + COALESCE(t.technical_score, 0) + 
+                         COALESCE(c.capital_score, 0) + COALESCE(ch.chip_score, 0)) AS total_score
+                    FROM dws_momentum_score m
+                    LEFT JOIN dws_value_score v ON m.trade_date = v.trade_date AND m.ts_code = v.ts_code
+                    LEFT JOIN dws_quality_score q ON m.trade_date = q.trade_date AND m.ts_code = q.ts_code
+                    LEFT JOIN dws_technical_score t ON m.trade_date = t.trade_date AND m.ts_code = t.ts_code
+                    LEFT JOIN dws_capital_score c ON m.trade_date = c.trade_date AND m.ts_code = c.ts_code
+                    LEFT JOIN dws_chip_score ch ON m.trade_date = ch.trade_date AND m.ts_code = ch.ts_code
+                    LEFT JOIN ods_daily od ON m.trade_date = od.trade_date AND m.ts_code = od.ts_code
+                    LEFT JOIN dim_stock ds ON m.ts_code = ds.ts_code
+                    WHERE m.trade_date = %s
+                    """
+                
+                params = [trade_date]
+                
+                if search_ts_code:
+                    base_sql += " AND m.ts_code LIKE %s"
+                    params.append(f"%{search_ts_code}%")
+                
+                # 计数
+                count_sql = f"SELECT COUNT(*) FROM ({base_sql}) AS sub"
+                cursor.execute(count_sql, params)
+                total = cursor.fetchone()[0]
+                
+                # 分页查询
+                offset = (page - 1) * page_size
+                query_sql = f"""
+                    {base_sql}
+                    ORDER BY {sort_by} {sort_direction}
+                    LIMIT %s OFFSET %s
+                """
+                cursor.execute(query_sql, params + [page_size, offset])
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+        
+        return jsonify({
+            "data": {
+                "columns": columns,
+                "rows": [list(row) for row in rows],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "trade_date": trade_date,
+                "sort_by": sort_by,
+                "sort_order": sort_order
+            }
+        })
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+@app.route("/api/scores/top", methods=["GET"])
+def api_scores_top():
+    """获取 Top N 股票评分"""
+    try:
+        trade_date = request.args.get("trade_date")
+        top_n = int(request.args.get("top_n", 50))
+        score_type = request.args.get("type", "claude")
+        
+        cfg = get_env_config()
+        
+        with get_mysql_connection(cfg) as conn:
+            with conn.cursor() as cursor:
+                if not trade_date:
+                    cursor.execute("SELECT MAX(trade_date) FROM dws_momentum_score")
+                    trade_date = cursor.fetchone()[0]
+                else:
+                    trade_date = int(trade_date)
+                
+                if not trade_date:
+                    return jsonify({"data": []})
+                
+                if score_type == "fama":
+                    sql = """
+                    SELECT 
+                        s.ts_code, ds.name, od.pct_chg,
+                        s.size_score, m.momentum_score, v.value_score, q.quality_score,
+                        t.technical_score, c.capital_score, ch.chip_score,
+                        (COALESCE(s.size_score, 0) + COALESCE(m.momentum_score, 0) + 
+                         COALESCE(v.value_score, 0) + COALESCE(q.quality_score, 0) + 
+                         COALESCE(t.technical_score, 0) + COALESCE(c.capital_score, 0) + 
+                         COALESCE(ch.chip_score, 0)) AS total_score
+                    FROM dws_fama_size_score s
+                    LEFT JOIN dws_fama_momentum_score m ON s.trade_date = m.trade_date AND s.ts_code = m.ts_code
+                    LEFT JOIN dws_fama_value_score v ON s.trade_date = v.trade_date AND s.ts_code = v.ts_code
+                    LEFT JOIN dws_fama_quality_score q ON s.trade_date = q.trade_date AND s.ts_code = q.ts_code
+                    LEFT JOIN dws_fama_technical_score t ON s.trade_date = t.trade_date AND s.ts_code = t.ts_code
+                    LEFT JOIN dws_fama_capital_score c ON s.trade_date = c.trade_date AND s.ts_code = c.ts_code
+                    LEFT JOIN dws_fama_chip_score ch ON s.trade_date = ch.trade_date AND s.ts_code = ch.ts_code
+                    LEFT JOIN ods_daily od ON s.trade_date = od.trade_date AND s.ts_code = od.ts_code
+                    LEFT JOIN dim_stock ds ON s.ts_code = ds.ts_code
+                    WHERE s.trade_date = %s
+                    ORDER BY total_score DESC
+                    LIMIT %s
+                    """
+                else:
+                    sql = """
+                    SELECT 
+                        m.ts_code, ds.name, od.pct_chg,
+                        NULL AS size_score,
+                        m.momentum_score, v.value_score, q.quality_score,
+                        t.technical_score, c.capital_score, ch.chip_score,
+                        (COALESCE(m.momentum_score, 0) + COALESCE(v.value_score, 0) + 
+                         COALESCE(q.quality_score, 0) + COALESCE(t.technical_score, 0) + 
+                         COALESCE(c.capital_score, 0) + COALESCE(ch.chip_score, 0)) AS total_score
+                    FROM dws_momentum_score m
+                    LEFT JOIN dws_value_score v ON m.trade_date = v.trade_date AND m.ts_code = v.ts_code
+                    LEFT JOIN dws_quality_score q ON m.trade_date = q.trade_date AND m.ts_code = q.ts_code
+                    LEFT JOIN dws_technical_score t ON m.trade_date = t.trade_date AND m.ts_code = t.ts_code
+                    LEFT JOIN dws_capital_score c ON m.trade_date = c.trade_date AND m.ts_code = c.ts_code
+                    LEFT JOIN dws_chip_score ch ON m.trade_date = ch.trade_date AND m.ts_code = ch.ts_code
+                    LEFT JOIN ods_daily od ON m.trade_date = od.trade_date AND m.ts_code = od.ts_code
+                    LEFT JOIN dim_stock ds ON m.ts_code = ds.ts_code
+                    WHERE m.trade_date = %s
+                    ORDER BY total_score DESC
+                    LIMIT %s
+                    """
+                
+                cursor.execute(sql, [trade_date, top_n])
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+        
+        # 添加排名
+        result = []
+        for i, row in enumerate(rows, 1):
+            row_dict = dict(zip(columns, row))
+            row_dict["rank"] = i
+            result.append(row_dict)
+        
+        return jsonify({
+            "data": result,
+            "trade_date": trade_date,
+            "type": score_type
+        })
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+@app.route("/api/scores/compare", methods=["GET"])
+def api_scores_compare():
+    """对比 Claude 和 Fama 评分系统"""
+    try:
+        trade_date = request.args.get("trade_date")
+        top_n = int(request.args.get("top_n", 50))
+        
+        cfg = get_env_config()
+        
+        with get_mysql_connection(cfg) as conn:
+            with conn.cursor() as cursor:
+                if not trade_date:
+                    cursor.execute("SELECT MAX(trade_date) FROM dws_momentum_score")
+                    trade_date = cursor.fetchone()[0]
+                else:
+                    trade_date = int(trade_date)
+                
+                if not trade_date:
+                    return jsonify({"data": []})
+                
+                sql = """
+                SELECT 
+                    c.ts_code,
+                    ds.name,
+                    c.claude_score,
+                    f.fama_score,
+                    f.fama_score - c.claude_score AS score_diff
+                FROM (
+                    SELECT 
+                        m.ts_code,
+                        (COALESCE(m.momentum_score, 0) + COALESCE(v.value_score, 0) + 
+                         COALESCE(q.quality_score, 0) + COALESCE(t.technical_score, 0) + 
+                         COALESCE(c.capital_score, 0) + COALESCE(ch.chip_score, 0)) AS claude_score
+                    FROM dws_momentum_score m
+                    LEFT JOIN dws_value_score v ON m.trade_date = v.trade_date AND m.ts_code = v.ts_code
+                    LEFT JOIN dws_quality_score q ON m.trade_date = q.trade_date AND m.ts_code = q.ts_code
+                    LEFT JOIN dws_technical_score t ON m.trade_date = t.trade_date AND m.ts_code = t.ts_code
+                    LEFT JOIN dws_capital_score c ON m.trade_date = c.trade_date AND m.ts_code = c.ts_code
+                    LEFT JOIN dws_chip_score ch ON m.trade_date = ch.trade_date AND m.ts_code = ch.ts_code
+                    WHERE m.trade_date = %s
+                ) c
+                LEFT JOIN (
+                    SELECT 
+                        s.ts_code,
+                        (COALESCE(s.size_score, 0) + COALESCE(m.momentum_score, 0) + 
+                         COALESCE(v.value_score, 0) + COALESCE(q.quality_score, 0) + 
+                         COALESCE(t.technical_score, 0) + COALESCE(c.capital_score, 0) + 
+                         COALESCE(ch.chip_score, 0)) AS fama_score
+                    FROM dws_fama_size_score s
+                    LEFT JOIN dws_fama_momentum_score m ON s.trade_date = m.trade_date AND s.ts_code = m.ts_code
+                    LEFT JOIN dws_fama_value_score v ON s.trade_date = v.trade_date AND s.ts_code = v.ts_code
+                    LEFT JOIN dws_fama_quality_score q ON s.trade_date = q.trade_date AND s.ts_code = q.ts_code
+                    LEFT JOIN dws_fama_technical_score t ON s.trade_date = t.trade_date AND s.ts_code = t.ts_code
+                    LEFT JOIN dws_fama_capital_score c ON s.trade_date = c.trade_date AND s.ts_code = c.ts_code
+                    LEFT JOIN dws_fama_chip_score ch ON s.trade_date = ch.trade_date AND s.ts_code = ch.ts_code
+                    WHERE s.trade_date = %s
+                ) f ON c.ts_code = f.ts_code
+                LEFT JOIN dim_stock ds ON c.ts_code = ds.ts_code
+                ORDER BY c.claude_score DESC
+                LIMIT %s
+                """
+                
+                cursor.execute(sql, [trade_date, trade_date, top_n])
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+        
+        result = [dict(zip(columns, row)) for row in rows]
+        
+        return jsonify({
+            "data": result,
+            "trade_date": trade_date
+        })
+    except Exception as exc:
+        return _json_error(str(exc))
+

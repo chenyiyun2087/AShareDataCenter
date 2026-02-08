@@ -780,3 +780,91 @@ CREATE TABLE IF NOT EXISTS meta_quality_check_log (
   PRIMARY KEY (id),
   KEY idx_check_date (check_date)
 ) ENGINE=InnoDB COMMENT='数据质量校验日志';
+
+-- 股票标签日表 (维表集成)
+CREATE TABLE IF NOT EXISTS dwd_stock_label_daily (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  name VARCHAR(50) NULL COMMENT '股票名称',
+  is_st TINYINT NOT NULL DEFAULT 0 COMMENT '是否ST(1是/0否)',
+  is_new TINYINT NOT NULL DEFAULT 0 COMMENT '是否次新股<60天(1是/0否)',
+  limit_type TINYINT NOT NULL DEFAULT 10 COMMENT '涨跌幅限制类型(10主板/20创业板科创板/30北交所)',
+  market VARCHAR(10) NULL COMMENT '市场(主板/创业板/科创板/北交所)',
+  industry VARCHAR(50) NULL COMMENT '所属行业',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date),
+  KEY idx_label (trade_date, is_st, is_new, limit_type)
+) ENGINE=InnoDB COMMENT='股票标签日表(维表集成)';
+
+-- ========== Phase 1: 增强因子表 ==========
+
+-- 流动性因子主题表
+CREATE TABLE IF NOT EXISTS dws_liquidity_factor (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  turnover_vol_20 DECIMAL(12,6) NULL COMMENT '20日换手率波动',
+  amihud_20 DECIMAL(18,10) NULL COMMENT '20日Amihud非流动性',
+  vol_concentration DECIMAL(12,6) NULL COMMENT '成交量集中度(5日MAX/20日AVG)',
+  bid_ask_spread DECIMAL(12,6) NULL COMMENT '买卖价差代理(2*(H-L)/(H+L))',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='流动性因子主题表';
+
+-- 扩展动量因子表
+CREATE TABLE IF NOT EXISTS dws_momentum_extended (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  high_52w_dist DECIMAL(12,6) NULL COMMENT '52周高点距离',
+  reversal_5 DECIMAL(12,6) NULL COMMENT '5日反转因子(-ret_5)',
+  mom_12m_1m DECIMAL(12,6) NULL COMMENT '12月去1月动量',
+  vol_price_corr DECIMAL(12,6) NULL COMMENT '20日量价相关系数',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='扩展动量因子表';
+
+-- 扩展质量因子表
+CREATE TABLE IF NOT EXISTS dws_quality_extended (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  dupont_margin DECIMAL(12,6) NULL COMMENT '杜邦-净利率',
+  dupont_turnover DECIMAL(12,6) NULL COMMENT '杜邦-资产周转率',
+  dupont_leverage DECIMAL(12,6) NULL COMMENT '杜邦-财务杠杆',
+  roe_trend DECIMAL(12,6) NULL COMMENT 'ROE同比变化',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='扩展质量因子表';
+
+-- 风险因子表
+CREATE TABLE IF NOT EXISTS dws_risk_factor (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  downside_vol_60 DECIMAL(12,6) NULL COMMENT '60日下行波动率',
+  max_drawdown_60 DECIMAL(12,6) NULL COMMENT '60日最大回撤',
+  var_5pct_60 DECIMAL(12,6) NULL COMMENT '60日VaR(5%分位)',
+  beta_60 DECIMAL(12,6) NULL COMMENT '60日Beta系数',
+  ivol_20 DECIMAL(12,6) NULL COMMENT '20日特质波动率',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='风险因子表';
+
+-- 指数日线表 (Phase 2)
+CREATE TABLE IF NOT EXISTS ods_index_daily (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '指数代码',
+  open DECIMAL(20,4) NULL COMMENT '开盘点位',
+  high DECIMAL(20,4) NULL COMMENT '最高点位',
+  low DECIMAL(20,4) NULL COMMENT '最低点位',
+  close DECIMAL(20,4) NULL COMMENT '收盘点位',
+  pre_close DECIMAL(20,4) NULL COMMENT '昨收点位',
+  pct_chg DECIMAL(12,6) NULL COMMENT '涨跌幅',
+  vol DECIMAL(20,4) NULL COMMENT '成交量(手)',
+  amount DECIMAL(20,4) NULL COMMENT '成交额(千元)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='指数日线表';
