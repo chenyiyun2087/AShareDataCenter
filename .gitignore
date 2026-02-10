@@ -3,3 +3,4 @@
 config/etl.ini
 /app/
 /logs/
+/score_report_20260206.xlsx

@@ -281,18 +281,29 @@ npm run dev
 
 ---
 
-## 自动化运维与历史补数
+### 2. 数据状态校验工具
 
-### 1. 定时任务配置 (Cron)
-为了保证每日选股评分的实时性，推荐使用 `scripts/schedule/run_with_retry.py` 封装流水线运行：
+本项目提供了一套完整的检查脚本，用于监控数据新鲜度、流水线进度及数据库健康状况。
 
-- **17:00 (初步同步)**: 获取基础行情，使用 `--lenient` 忽略延迟发布的两融数据。
-- **20:00 (特征强化)**: 获取资金流、筹码、技术因子等主要特征。
-- **08:30 T+1 (完整补齐)**: 强制补齐最晚发布的两融数据，并更新最终 ADS 评分。
+#### 全链路数据新鲜度检查 (`check_data_status.py`)
+检查 ODS、DWD、DWS、ADS 各层表的最新的 `trade_date`，确认数据是否已同步。
+```bash
+python scripts/check/check_data_status.py --config config/etl.ini --categories ods,dwd,dws,ads
+```
 
-具体的 `crontab -e` 配置示例见 `scripts/schedule/scheduler_setup.md`。
+#### 流水线执行进度监控 (`check_pipeline_status.py`)
+从元数据表 `meta_etl_run_log` 中实时提取任务状态（RUNNING/SUCCESS/FAILED）。
+```bash
+python scripts/check/check_pipeline_status.py --config config/etl.ini
+```
 
-### 2. 历史数据回测补数方案
+#### 数据库连接安全检查 (`check_db_connections.py`)
+监控 MySQL 当前连接数，确保 `get_mysql_session` 正常工作，无连接泄露风险。
+```bash
+python scripts/check/check_db_connections.py --config config/etl.ini
+```
+
+### 3. 历史数据回测补数方案
 针对 2010-2019 年的历史缺失数据，提供了批处理补数方案：
 
 - **补数顺序**: ODS (Moneyflow/Factors) -> DWD -> DWS -> ADS。
@@ -374,6 +385,27 @@ python scripts/sync/run_ads.py --mode incremental --start-date 20100101 --end-da
 #### 4. Batch Execution Script
 To automate this year-by-year execution, use the provided batch script with required arguments:
 ```bash
-python scripts/backfill/batch_runner.py --start-year 2010 --end-year 2019 --layer all --rate-limit 400
-```
+
+### 4. 常见问题排查 (Troubleshooting)
+
+#### Q1: 增量同步水位线跑向未来 (2026-12-31)
+**现象**: `check_data_status.py` 显示水位线在未来日期，导致今日数据不更新。
+**原因**: 交易日历表 (`dim_trade_cal`) 预填了未来一年的日期。旧版脚本未限制“今天”，导致它空跑未来日期的任务并提交了成功状态。
+**解决方案**: 
+- **代码层面**: 所有 Runner (`ods/dwd/dws/ads`) 已增加 `today_cap` 逻辑，强行过滤掉大于今天的日期。
+- **数据层面**: 如果再次发生，需手动执行 SQL 重置水位线：
+  ```sql
+  UPDATE meta_etl_watermark SET water_mark = 20260210 WHERE api_name = 'ods_daily'; -- 设为最后实际完成的日期
+  ```
+
+#### Q2: MySQL 连接数过高 (Too Many Connections)
+**现象**: 数据库报错 `Too many connections`，查询 `SHOW PROCESSLIST` 发现大量 `Sleep` 进程。
+**原因**: 外部调度脚本（如 sibling 项目 `Chenyiyun2087/scheduler.py`）未正确复用数据库连接，高频创建新连接池。
+**解决方案**:
+- **代码层面**: 确保所有 Python 脚本使用全局单例模式 (`Singleton`) 创建 SQLAlchemy Engine，或使用 `runtime.get_mysql_session` 上下文管理器。
+- **运维层面**: 杀掉泄露连接的进程，或重启 MySQL 服务。
+  ```bash
+  # 查找疑似泄露的 Python 进程
+  ps aux | grep python | grep -v grep
+  ```
 

@@ -506,6 +506,12 @@ def run_incremental(
                     trade_dates = list_trade_dates(cursor, start_date, end_date)
                 else:
                     trade_dates = list_trade_dates_after(cursor, last_date, end_date)
+                
+                # Cap dates at today to avoid processing future calendar dates
+                from datetime import datetime
+                today_int = int(datetime.now().strftime('%Y%m%d'))
+                trade_dates = [d for d in trade_dates if d <= today_int]
+            
             total_dates = len(trade_dates)
             logger.info("ODS incremental load: %s trade dates to process", total_dates)
 
