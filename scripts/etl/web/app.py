@@ -12,7 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
 from .. import ads, base, dwd, dws, ods
-from ..base.runtime import get_env_config, get_mysql_connection
+from ..base.runtime import get_env_config, get_mysql_session
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DIST_DIR = ROOT_DIR / "app" / "dist"
@@ -137,7 +137,7 @@ def _run_ods_features_async(params: dict) -> None:
 
 def _get_last_ods_run() -> Optional[dict]:
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 "SELECT start_at, end_at, status FROM meta_etl_run_log "
@@ -212,7 +212,7 @@ def _fetch_ods_rows(
         params.append(search_trade_date)
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     offset = (page - 1) * page_size
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             cursor.execute(f"SELECT COUNT(*) FROM {table} {where_sql}", params)
             total = cursor.fetchone()[0]
@@ -402,7 +402,7 @@ def api_data_status():
         cfg = get_env_config()
         status = {}
         
-        with get_mysql_connection(cfg) as conn:
+        with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
                 # ODS层状态
                 ods_tables = [
@@ -506,7 +506,7 @@ def api_scores():
         
         sort_direction = "DESC" if sort_order.lower() == "desc" else "ASC"
         
-        with get_mysql_connection(cfg) as conn:
+        with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
                 # 获取最新交易日
                 if not trade_date:
@@ -610,7 +610,7 @@ def api_scores_top():
         
         cfg = get_env_config()
         
-        with get_mysql_connection(cfg) as conn:
+        with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
                 if not trade_date:
                     cursor.execute("SELECT MAX(trade_date) FROM dws_momentum_score")
@@ -696,7 +696,7 @@ def api_scores_compare():
         
         cfg = get_env_config()
         
-        with get_mysql_connection(cfg) as conn:
+        with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
                 if not trade_date:
                     cursor.execute("SELECT MAX(trade_date) FROM dws_momentum_score")

@@ -12,7 +12,7 @@ from ..base.runtime import (
     RateLimiter,
     ensure_watermark,
     get_env_config,
-    get_mysql_connection,
+    get_mysql_session,
     get_watermark,
     list_trade_dates,
     list_trade_dates_after,
@@ -23,7 +23,7 @@ from ..base.runtime import (
     upsert_rows,
 )
 
-DEFAULT_RATE_LIMIT = 500
+DEFAULT_RATE_LIMIT = 400
 DEFAULT_RETRY_ATTEMPTS = 3
 DEFAULT_RETRY_DELAY_S = 1.0
 
@@ -426,18 +426,23 @@ def run_index_daily(
         logger.info(f"Completed index daily sync for {len(INDEX_CODES)} indices")
 
 
-def run_full(token: str, start_date: int, rate_limit: int = DEFAULT_RATE_LIMIT) -> None:
+def run_full(
+    token: str,
+    start_date: int,
+    end_date: Optional[int] = None,
+    rate_limit: int = DEFAULT_RATE_LIMIT,
+) -> None:
     cfg = get_env_config()
     limiter = RateLimiter(rate_limit)
     pro = ts.pro_api(token)
 
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "ods", "full")
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                trade_dates = list_trade_dates(cursor, start_date)
+                trade_dates = list_trade_dates(cursor, start_date, end_date)
             total_dates = len(trade_dates)
             logger.info("ODS full load: %s trade dates to process", total_dates)
             for index, trade_date in enumerate(trade_dates, start=1):
@@ -475,22 +480,32 @@ def run_full(token: str, start_date: int, rate_limit: int = DEFAULT_RATE_LIMIT) 
 
 def run_incremental(
     token: str,
+    start_date: Optional[int] = None,
+    end_date: Optional[int] = None,
     rate_limit: int = DEFAULT_RATE_LIMIT,
 ) -> None:
     cfg = get_env_config()
     limiter = RateLimiter(rate_limit)
     pro = ts.pro_api(token)
 
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "ods", "incremental")
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                last_date = get_watermark(cursor, "ods_daily")
+                if start_date:
+                    last_date = start_date - 1
+                else:
+                    last_date = get_watermark(cursor, "ods_daily")
+                
                 if last_date is None:
                     raise RuntimeError("missing watermark for ods_daily")
-                trade_dates = list_trade_dates_after(cursor, last_date)
+                
+                if start_date:
+                    trade_dates = list_trade_dates(cursor, start_date, end_date)
+                else:
+                    trade_dates = list_trade_dates_after(cursor, last_date, end_date)
             total_dates = len(trade_dates)
             logger.info("ODS incremental load: %s trade dates to process", total_dates)
 
@@ -546,7 +561,7 @@ def run_fina_incremental(
     limiter = RateLimiter(rate_limit)
     pro = ts.pro_api(token)
 
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "ods_fina_indicator", "incremental")
             conn.commit()

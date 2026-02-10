@@ -12,7 +12,7 @@ scripts_dir = Path(__file__).resolve().parents[1]
 if str(scripts_dir) not in sys.path:
     sys.path.insert(0, str(scripts_dir))
 
-from etl.base.runtime import get_env_config, get_mysql_connection, get_tushare_token, get_tushare_limit
+from etl.base.runtime import get_env_config, get_mysql_session, get_tushare_token, get_tushare_limit
 from etl.ods import run_fina_incremental
 
 
@@ -64,7 +64,7 @@ def main() -> None:
     start_year = args.start_year
     if args.resume:
         cfg = get_env_config()
-        with get_mysql_connection(cfg) as conn:
+        with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     "SELECT water_mark FROM meta_etl_watermark WHERE api_name=%s",

@@ -7,21 +7,16 @@
 - `sql/transform.sql`：DWS/ADS 计算示例 SQL
 - `sql/preprocess.sql`：ODS 清洗、缺失值填充与极值处理示例 SQL
 - `docs/etl_tasks.md`：全量初始化与每日增量任务清单（含水位、重试、校验）
-- `scripts/tushare_etl.py`：按层级调用的 TuShare 日频 ETL（全量/增量）
-- `scripts/run_base.py`：base 维表任务
-- `scripts/run_ods.py`：ODS 原始入库
-- `scripts/run_ods_features.py`：ODS 特征数据入库
-- `scripts/run_dwd.py`：DWD 标准明细
-- `scripts/run_dws.py`：DWS 主题衍生
-- `scripts/run_ads.py`：ADS 服务层
-- `scripts/run_daily_pipeline.py`：每日增量全流程（含检查与耗时统计）
-- `scripts/check_ods_features.py`：ODS 特征数据完整性检查
-- `scripts/check_data_status.py`：全链路数据状态检查（ODS/Financial/Features/DWD/DWS/ADS）
-- `scripts/run_fina_yearly.py`：按年补齐财务指标（fina_indicator）
-- `scripts/score_stocks.py`：股票评分脚本（单只/批量）
-  - 当 ADS 特征表为空时，自动回退到 DWD/DWS 明细表拼接因子。
-  - 可使用 `--fallback-latest` 在指定交易日缺失时自动回退到最新可用交易日。
-  - 当 DWD/DWS 也缺失时，会使用 ODS 数据拼接简化因子用于评分。
+- `scripts/sync/run_base.py`：base 维表任务
+- `scripts/sync/run_ods.py`：ODS 原始入库
+- `scripts/sync/run_ods_features.py`：ODS 特征数据入库
+- `scripts/sync/run_dwd.py`：DWD 标准明细
+- `scripts/sync/run_dws.py`：DWS 主题衍生
+- `scripts/sync/run_ads.py`：ADS 服务层
+- `scripts/sync/run_daily_pipeline.py`：每日增量全流程（含检查与耗时统计）
+- `scripts/check/check_ods_features.py`：ODS 特征数据完整性检查
+- `scripts/check/check_data_status.py`：全链路数据状态检查（ODS/Financial/Features/DWD/DWS/ADS）
+- `scripts/sync/run_fina_yearly.py`：按年补齐财务指标（fina_indicator）
 - `scripts/run_web.py`：Web 控制台（手动触发/定时任务/执行日志）
 
 ## 设计要点
@@ -36,41 +31,33 @@
 3. 配置数据库与 TuShare Token：
    - 环境变量：`TUSHARE_TOKEN`、`MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DB`
    - 或使用本地配置文件 `config/etl.ini`（从 `config/etl.example.ini` 复制）
-4. 全量初始化：
+4. 全量初始化（推荐按层级独立运行）：
    ```bash
-   python scripts/tushare_etl.py --mode full --start-date 20100101
+   python scripts/sync/run_base.py --mode full --start-date 20100101
+   python scripts/sync/run_ods.py --mode incremental
+   python scripts/sync/run_dwd.py --mode incremental
+   python scripts/sync/run_dws.py --mode incremental
+   python scripts/sync/run_ads.py --mode incremental
    ```
-5. 每日增量：
+5. 每日增量全流程（自动分步校验与耗时统计）：
    ```bash
-   python scripts/tushare_etl.py --mode incremental
+   python scripts/sync/run_daily_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN
+   # 传入 --debug 查看每步耗时与参数
+   python scripts/sync/run_daily_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN --debug
    ```
 6. 财务指标补齐（按公告期窗口）：
    ```bash
-   python scripts/tushare_etl.py --mode incremental --fina-start 20200101 --fina-end 20231231
+   python scripts/sync/run_fina_yearly.py --start-year 2020 --end-year 2023
    ```
-7. 分层独立运行：
-   ```bash
-   python scripts/run_base.py --mode full --start-date 20100101
-   python scripts/run_ods.py --mode incremental
-   python scripts/run_dwd.py --mode incremental
-   python scripts/run_dws.py --mode incremental
-   python scripts/run_ads.py --mode incremental
-   ```
-8. 每日增量全流程（自动分步校验与耗时统计）：
-   ```bash
-   python scripts/run_daily_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN
-   # 传入 --debug 查看每步耗时与参数
-   python scripts/run_daily_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN --debug
-   ```
-9. 数据检查：
+7. 数据检查：
    ```bash
    # ODS 特征表完整性
-   python scripts/check_ods_features.py --start-date 20260101 --end-date 20260131 --config config/etl.ini
+   python scripts/check/check_ods_features.py --start-date 20260101 --end-date 20260131 --config config/etl.ini
 
    # 全链路状态（ODS/Financial/Features/DWD/DWS/ADS）
-   python scripts/check_data_status.py --config config/etl.ini
+   python scripts/check/check_data_status.py --config config/etl.ini
    ```
-10. Web 控制台：
+8. Web 控制台：
    ```bash
    # 先构建前端（在 app/ 目录）
    cd app
@@ -81,7 +68,6 @@
    # 再启动 Flask 服务（会托管 app/dist）
    python scripts/run_web.py --host 0.0.0.0 --port 5000
    ```
-
 ## 前端开发联调（可选）
 
 如需使用 Vite 开发服务器联调（前端与后端不同端口），可通过环境变量指定后端地址：
@@ -114,6 +100,9 @@ npm run dev
 | 主题 | 表名 | 说明 |
 |------|------|------|
 | **行情** | `ods_daily` | 日频行情 (OHLCV) |
+| | `ods_weekly` | 周频行情 |
+| | `ods_monthly` | 月频行情 |
+| | `ods_index_daily` | 指数日频行情 (沪深300/上证/创业板等) |
 | | `ods_daily_basic` | 每日指标 (PE/PB/换手率等) |
 | | `ods_adj_factor` | 复权因子 |
 | | `ods_stk_factor` | 技术因子 (100+字段, MACD/KDJ/RSI/BOLL等) |
@@ -134,15 +123,14 @@ npm run dev
 | 主题 | 表名 | 说明 |
 |------|------|------|
 | **行情标准化** | `dwd_daily` | 行情清洗后 |
-| | `dwd_daily_basic` | 指标清洗后 |
+| | `dwd_daily_basic` | 指标清洗后 (去极值) |
 | | `dwd_adj_factor` | 复权因子 |
-| | `dwd_stock_daily_standard` | 前复权行情 |
+| | `dwd_stock_daily_standard` | 前复权行情 (用于技术计算) |
 | **财务** | `dwd_fina_indicator` | 财务指标明细 |
-| | `dwd_fina_snapshot` | 财务快照 (按交易日映射) |
+| | `dwd_fina_snapshot` | 财务快照 (按交易日展开) |
 | **情绪** | `dwd_margin_sentiment` | 融资情绪 (净买入占比/变化率) |
 | **筹码** | `dwd_chip_stability` | 筹码稳定性 (集中度/成本偏离) |
 | **标签** | `dwd_stock_label_daily` | 股票标签 (ST/次新股/涨跌幅限制/板块) |
-
 ---
 
 ### DWS 主题层
@@ -257,3 +245,135 @@ npm run dev
 250: 
 251: ### 宽容模式说明 (`--lenient`)
 252: 由于 TuShare 各类数据发布时间不一，`--lenient` 参数允许流水线在“今日”部分特征数据缺失时仅记录警告而不中断退出。这适用于需要在收盘后立即查看初步分析结果的场景。
+---
+
+## 详细模块分析 (ETL 流程)
+
+以下是各层级脚本的核心逻辑深度解析，按执行依赖顺序排列。
+
+### 1. DWD (Data Warehouse Detail) - 数据清洗与标准化
+**入口脚本**: `scripts/sync/run_dwd.py` | **核心实现**: `scripts/etl/dwd/runner.py`
+
+- **日线行情 (`load_dwd_daily`)**: 统一字段命名，提取 `ods_daily` 指标。
+- **每日指标 (`load_dwd_daily_basic`)**: 对估值指标（PE/PB/PS等）进行**异常值清洗**（防极值脏数据）。
+- **复权因子 (`load_dwd_adj_factor`)**: 标准化存储 TuShare 复权系数。
+- **财务指标 (`load_dwd_fina_indicator`)**: 批量加载 `roe`, `netprofit_margin` 等核心财务数据。
+
+### 2. DWS (Data Warehouse Summary) - 衍生指标与复权价格
+**入口脚本**: `scripts/sync/run_dws.py` | **核心实现**: `scripts/etl/dws/runner.py`
+
+- **复权价格计算 (`_run_price_adj`)**:
+  - 自动计算历史日期的**前复权价**。
+  - 计算多周期收益率：`qfq_ret_1`, `5`, `20`, `60` 日。
+- **PIT (Point-in-Time) 财务数据 (`_run_fina_pit`)**:
+  - **避免未来数据**: 仅关联在该交易日或之前已发布的财报 (`ann_date <= trade_date`)。
+  - **每日展开**: 将低频财务指标展开到日维度，方便直接在回测系统中使用。
+
+### 3. ADS (Application Data Store) - 应用服务层
+**入口脚本**: `scripts/sync/run_ads.py` | **核心实现**: `scripts/etl/ads/runner.py`
+
+- **股票特征宽表 (`_run_features`)**:
+  - **全量拼接**: 将日线、估值、复权收益率、PIT 财务指标按 `trade_date` + `ts_code` 聚合成单条记录。
+  - 直接服务于选股模型和机器学习特征工程。
+- **选股空间/过滤器 (`_run_universe`)**:
+  - 标记 `is_tradable` (是否有成交), `is_listed` (是否上市), `is_suspended` (是否停牌)。
+  - 提供回测期间的可交易股票池，防止“幻觉交易”。
+
+---
+
+## 自动化运维与历史补数
+
+### 1. 定时任务配置 (Cron)
+为了保证每日选股评分的实时性，推荐使用 `scripts/schedule/run_with_retry.py` 封装流水线运行：
+
+- **17:00 (初步同步)**: 获取基础行情，使用 `--lenient` 忽略延迟发布的两融数据。
+- **20:00 (特征强化)**: 获取资金流、筹码、技术因子等主要特征。
+- **08:30 T+1 (完整补齐)**: 强制补齐最晚发布的两融数据，并更新最终 ADS 评分。
+
+具体的 `crontab -e` 配置示例见 `scripts/schedule/scheduler_setup.md`。
+
+### 2. 历史数据回测补数方案
+针对 2010-2019 年的历史缺失数据，提供了批处理补数方案：
+
+- **补数顺序**: ODS (Moneyflow/Factors) -> DWD -> DWS -> ADS。
+- **核心工具**: `scripts/backfill/batch_runner.py`。
+- **预计耗时**: 补齐 10 年的历史全量数据（含因子）约需 **22 小时**，建议在非交易时段挂机执行。
+- **详细计划**:
+
+#### 1. Data Health Assessment
+
+| Layer | Table | Status | Action Required |
+| :--- | :--- | :--- | :--- |
+| **ODS** | `ods_daily` | ✅ Complete (1990-2026) | None |
+| **ODS** | `ods_adj_factor` | ✅ Complete (1990-2026) | None |
+| **ODS** | `ods_daily_basic` | ✅ Complete (1990-2026) | None |
+| **ODS** | `ods_moneyflow` | ⚠️ Missing 2010-2019 | **Backfill 20100101-20191231** |
+| **ODS** | `ods_margin_detail` | ⚠️ Missing 2010-2019 | **Backfill 20100101-20191231** |
+| **ODS** | `ods_stk_factor` | ⚠️ Missing 2010-2019 | **Backfill 20100101-20191231** |
+| **ODS** | `ods_fina_indicator` | ⚠️ Missing 2010-2019 | **Backfill 20100101-20191231** |
+| **DWD** | All Tables | ⚠️ Dependent on ODS | **Backfill 20100101-20191231** |
+| **DWS** | All Tables | ❌ Missing Pre-2020 | **Backfill 20100101-20260208** |
+| **ADS** | All Tables | ❌ Missing Pre-2020 | **Backfill 20100101-20260208** |
+
+#### 2. Backfill Strategy
+
+**Constraints**:
+- **TuShare Rate Limits**:
+    - `moneyflow`: High volume (requires chunking).
+    - `stk_factor`: High volume.
+- **Execution Time**:
+    - Processing 16 years of DWS/ADS data is computationally intensive.
+    - Recommended batch size: 1 year per batch.
+
+**Execution Phases**:
+
+**Phase 1: ODS Backfill (The Foundation)**
+Target: 2010-01-01 to 2019-12-31
+
+1.  **Financial Indicators** (Low volume, high importance)
+    ```bash
+    python scripts/sync/run_ods.py --fina-start 20100101 --fina-end 20191231
+    ```
+2.  **Moneyflow & Margin** (High volume, use `run_ods_features.py`)
+    ```bash
+    python scripts/sync/run_ods_features.py --apis moneyflow,margin_detail,margin,margin_target --start-date 20100101 --end-date 20191231 --skip-existing
+    ```
+3.  **Stock Factors** (High volume)
+    ```bash
+    python scripts/sync/run_ods_features.py --apis stk_factor --start-date 20100101 --end-date 20191231 --skip-existing
+    ```
+
+**Phase 2: DWD Backfill**
+Target: 2010-01-01 to 2019-12-31
+
+```bash
+# Example for a single year
+python scripts/sync/run_dwd.py --mode incremental --start-date 20100101 --end-date 20101231
+```
+
+**Phase 3: DWS & ADS Backfill (The Strategy Layer)**
+Target: 2010-01-01 to 2026-02-08 (Present)
+
+```bash
+# Example for a single year
+python scripts/sync/run_dws.py --mode incremental --start-date 20100101 --end-date 20101231
+python scripts/sync/run_ads.py --mode incremental --start-date 20100101 --end-date 20101231
+```
+
+#### 3. Estimated Timeline
+
+| Task | Estimated Time (Year/Thread) | Total (10-16 Years) |
+| :--- | :--- | :--- |
+| ODS Moneyflow | ~30 mins | ~5 hours |
+| ODS Stk Factor | ~45 mins | ~7.5 hours |
+| DWD Sync | ~10 mins | ~2.5 hours |
+| DWS Sync | ~20 mins | ~5 hours |
+| ADS Sync | ~5 mins | ~1.5 hours |
+| **Total** | | **~21.5 hours** |
+
+#### 4. Batch Execution Script
+To automate this year-by-year execution, use the provided batch script with required arguments:
+```bash
+python scripts/backfill/batch_runner.py --start-year 2010 --end-year 2019 --layer all --rate-limit 400
+```
+

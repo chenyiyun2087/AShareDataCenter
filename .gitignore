@@ -2,3 +2,4 @@
 # Local runtime config
 config/etl.ini
 /app/
+/logs/

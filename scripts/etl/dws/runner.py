@@ -4,7 +4,7 @@ import logging
 from ..base.runtime import (
     ensure_watermark,
     get_env_config,
-    get_mysql_connection,
+    get_mysql_session,
     get_watermark,
     list_trade_dates,
     list_trade_dates_after,
@@ -293,7 +293,7 @@ def _run_chip_dynamics(cursor, trade_date: int | None = None) -> None:
 def run_full(start_date: int, end_date: int | None = None) -> None:
     """Run full DWS ETL by processing each trade date to avoid lock overflow."""
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "dws", "full")
             conn.commit()
@@ -343,7 +343,7 @@ def run_full(start_date: int, end_date: int | None = None) -> None:
 
 def run_incremental(start_date: int | None = None, end_date: int | None = None) -> None:
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "dws", "incremental")
             conn.commit()

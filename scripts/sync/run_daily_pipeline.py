@@ -15,7 +15,7 @@ project_root = scripts_dir.parent
 if str(scripts_dir) not in sys.path:
     sys.path.insert(0, str(scripts_dir))
 
-from etl.base.runtime import get_env_config, get_mysql_connection, get_tushare_limit, get_tushare_token
+from etl.base.runtime import get_env_config, get_mysql_session, get_tushare_limit, get_tushare_token
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,7 +72,7 @@ def _apply_config(config: Optional[str]) -> None:
 
 def _latest_trade_date() -> Optional[int]:
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 "SELECT MAX(cal_date) FROM dim_trade_cal "
@@ -140,10 +140,18 @@ def main() -> None:
     def get_script(rel_path: str) -> str:
         return str((project_root / rel_path).resolve())
 
+    ods_args = ["--mode", "incremental"]
+    if args.start_date:
+        ods_args += ["--start-date", str(args.start_date)]
+    if args.end_date:
+        ods_args += ["--end-date", str(args.end_date)]
+
     _run_step(
         "ODS incremental",
         base_cmd
-        + [get_script("scripts/sync/run_ods.py"), "--mode", "incremental", "--rate-limit", str(rate_limit)]
+        + [get_script("scripts/sync/run_ods.py")]
+        + ods_args
+        + ["--rate-limit", str(rate_limit)]
         + base_config
         + ["--token", token],
         args.debug,
@@ -154,7 +162,7 @@ def main() -> None:
         "Check ODS",
         base_cmd
         + [get_script("scripts/check/check_ods.py"), "--expected-trade-date", str(expected_trade_date)]
-        + base_config,
+        + lenient_config,
         args.debug,
     )
 

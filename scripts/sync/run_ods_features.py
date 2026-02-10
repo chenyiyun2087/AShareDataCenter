@@ -19,7 +19,7 @@ import tushare as ts
 from etl.base.runtime import (
     RateLimiter,
     get_env_config,
-    get_mysql_connection,
+    get_mysql_session,
     get_tushare_token,
     get_tushare_limit,
     list_trade_dates,
@@ -297,9 +297,30 @@ def _table_for_api(api_name: str) -> str:
     return table_map[api_name]
 
 
+def _clean_extreme_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Clamp extremely large valuation ratios that could cause MySQL 'Out of range' errors."""
+    # Columns likely to have extreme values or overflow DECIMAL(20,4)
+    # 20,4 can hold up to 9,999,999,999,999.9999
+    # We clamp at 1e12 to be safe
+    valuation_cols = ["pe", "pe_ttm", "pb", "ps", "ps_ttm", "dv_ratio", "dv_ttm"]
+    for col in valuation_cols:
+        if col in df.columns:
+            # Replace infinity with NaN first
+            df[col] = df[col].replace([float("inf"), float("-inf")], float("nan"))
+            # Clamp to a large enough value for stock data but safe for SQL
+            max_val = 1_000_000_000.0  # 1 Billion is usually enough for ratios
+            df[col] = df[col].apply(lambda x: min(max_val, x) if pd.notnull(x) else x)
+            df[col] = df[col].apply(lambda x: max(-max_val, x) if pd.notnull(x) else x)
+    return df
+
+
 def _prepare_rows(columns: List[str], df: pd.DataFrame, trade_date: int):
     df = df.copy()
     df.columns = [str(col).strip() for col in df.columns]
+    
+    # Clean data before reindexing
+    df = _clean_extreme_values(df)
+    
     if "trade_date" in columns and "trade_date" not in df.columns:
         df["trade_date"] = trade_date
     if "ts_code" in columns and "ts_code" not in df.columns:
@@ -410,7 +431,7 @@ def main() -> None:
     }
     pro = ts.pro_api(token)
 
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             table_map = {api: _table_for_api(api) for api in apis if api in api_map}
             existing = _existing_tables(cursor, cfg.database, list(table_map.values()))

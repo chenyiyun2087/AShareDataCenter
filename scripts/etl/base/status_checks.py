@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from .runtime import get_env_config, get_mysql_connection
+from .runtime import get_env_config, get_mysql_session
 
 
 @dataclass
@@ -295,7 +295,7 @@ def check_data_status(expected_date: Optional[int] = None) -> DataPipelineStatus
     3. Next day is ready for data ingestion
     """
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             if expected_date is None:
                 expected_date = _get_latest_trade_date(cursor)

@@ -6,7 +6,7 @@ from typing import Optional
 from ..base.runtime import (
     ensure_watermark,
     get_env_config,
-    get_mysql_connection,
+    get_mysql_session,
     get_watermark,
     list_trade_dates,
     list_trade_dates_after,
@@ -261,7 +261,7 @@ def load_dwd_stock_label_daily(cursor, trade_date: int) -> None:
 
 def run_full(start_date: int, end_date: Optional[int] = None) -> None:
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "dwd", "full")
             conn.commit()
@@ -308,7 +308,7 @@ def run_full(start_date: int, end_date: Optional[int] = None) -> None:
 
 def run_incremental(start_date: Optional[int] = None, end_date: Optional[int] = None) -> None:
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "dwd", "incremental")
             conn.commit()
@@ -384,7 +384,7 @@ def run_incremental(start_date: Optional[int] = None, end_date: Optional[int] = 
 
 def run_fina_incremental(start_date: int, end_date: int) -> None:
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "dwd_fina_indicator", "incremental")
             conn.commit()

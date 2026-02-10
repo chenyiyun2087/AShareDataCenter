@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token", default=None)
     parser.add_argument("--mode", choices=["full", "incremental"], default="incremental")
     parser.add_argument("--start-date", type=int, default=20100101)
+    parser.add_argument("--end-date", type=int)
     parser.add_argument("--fina-start", type=int)
     parser.add_argument("--fina-end", type=int)
     parser.add_argument("--rate-limit", type=int, default=None)
@@ -70,9 +71,14 @@ def main() -> None:
     rate_limit = args.rate_limit or get_tushare_limit()
 
     if args.mode == "full":
-        run_full(token, args.start_date, rate_limit)
+        run_full(token, args.start_date, args.end_date, rate_limit)
     else:
-        run_incremental(token, rate_limit)
+        run_incremental(
+            token,
+            args.start_date if args.start_date != 20100101 else None,
+            args.end_date,
+            rate_limit,
+        )
 
     if args.fina_start and args.fina_end:
         run_fina_incremental(token, args.fina_start, args.fina_end, rate_limit)

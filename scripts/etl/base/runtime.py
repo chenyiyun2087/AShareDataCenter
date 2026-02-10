@@ -9,6 +9,7 @@ from typing import Iterable, List, Optional, Tuple
 
 import pandas as pd
 import pymysql
+from contextlib import contextmanager
 
 BATCH_SIZE = 2000
 
@@ -88,7 +89,7 @@ def get_tushare_token() -> Optional[str]:
 
 def get_tushare_limit() -> int:
     cfg = _load_config()
-    return cfg.getint("tushare", "rate_limit", fallback=500)
+    return cfg.getint("tushare", "rate_limit", fallback=400)
 
 
 def get_mysql_connection(cfg: MysqlConfig) -> pymysql.connections.Connection:
@@ -107,6 +108,18 @@ def get_mysql_connection(cfg: MysqlConfig) -> pymysql.connections.Connection:
             "Failed to connect to MySQL. Check MYSQL_HOST/MYSQL_PORT/MYSQL_USER/"
             "MYSQL_PASSWORD/MYSQL_DB and verify credentials."
         ) from exc
+
+
+@contextmanager
+def get_mysql_session(cfg: MysqlConfig):
+    """Context manager that ensures the connection is closed.
+    Use this for with-statements to prevent connection leaks.
+    """
+    conn = get_mysql_connection(cfg)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def to_records(df: pd.DataFrame, columns: List[str]) -> List[Tuple]:

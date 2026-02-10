@@ -8,7 +8,7 @@ import pandas as pd
 from .runtime import (
     RateLimiter,
     ensure_watermark,
-    get_mysql_connection,
+    get_mysql_session,
     get_watermark,
     list_run_logs,
     log_run_end,
@@ -67,7 +67,7 @@ def run_full(token: str, start_date: int, rate_limit: int = DEFAULT_RATE_LIMIT) 
     limiter = RateLimiter(rate_limit)
     pro = ts.pro_api(token)
 
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "base", "full")
             conn.commit()
@@ -105,7 +105,7 @@ def run_incremental(
     limiter = RateLimiter(rate_limit)
     pro = ts.pro_api(token)
 
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "base", "incremental")
             conn.commit()
@@ -139,6 +139,6 @@ def run_incremental(
 
 def list_runs(limit: int = 50):
     cfg = get_env_config()
-    with get_mysql_connection(cfg) as conn:
+    with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
             return list_run_logs(cursor, limit)

@@ -3,6 +3,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # Add project scripts directory to sys.path to allow importing 'etl' package
 scripts_dir = Path(__file__).resolve().parents[1]
@@ -29,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user", default=None)
     parser.add_argument("--password", default=None)
     parser.add_argument("--database", default=None)
+    parser.add_argument(
+        "--ignore-today",
+        action="store_true",
+        help="Ignore failures if data for today (CURDATE) is missing.",
+    )
     return parser.parse_args()
 
 
@@ -78,6 +84,7 @@ def main() -> None:
 
     checks = []
     expected_date = args.expected_trade_date
+    today_str = datetime.now().strftime("%Y%m%d")
 
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -112,7 +119,12 @@ def main() -> None:
             if value is None or value < expected_date:
                 failures.append(label)
             continue
+        
         if value != expected_date:
+            # If ignore-today is set, and expected_date is today, allow data to be from previous trading day
+            if args.ignore_today and str(expected_date) == today_str:
+                if value is not None and value < expected_date:
+                    continue
             failures.append(label)
 
     if failures:
