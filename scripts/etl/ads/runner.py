@@ -6,6 +6,7 @@ from ..base.runtime import (
     get_env_config,
     get_mysql_connection,
     get_watermark,
+    list_trade_dates,
     list_trade_dates_after,
     log_run_end,
     log_run_start,
@@ -132,8 +133,8 @@ def _run_stock_score(cursor, trade_date: int | None = None) -> None:
     filter_sql = ""
     params = []
     if trade_date is not None:
-        filter_sql = "WHERE base.trade_date = %s"
-        params.extend([trade_date, trade_date, trade_date, trade_date, trade_date])
+        filter_sql = "WHERE tp.trade_date = %s"
+        params.append(trade_date)
     else:
         params = []
     
@@ -195,7 +196,7 @@ def _run_stock_score(cursor, trade_date: int | None = None) -> None:
         ROUND(capital_score, 6) AS capital_score,
         ROUND(sentiment_score, 6) AS sentiment_score,
         ROUND(chip_score, 6) AS chip_score,
-        -- Weighted total: tech 40%, capital 25%, sentiment 20%, chip 15%
+        -- Weighted total: tech 40, capital 25, sentiment 20, chip 15
         ROUND(tech_score * 0.4 + capital_score * 0.25 + sentiment_score * 0.2 + chip_score * 0.15, 6) AS total_score,
         RANK() OVER (PARTITION BY trade_date ORDER BY (tech_score * 0.4 + capital_score * 0.25 + sentiment_score * 0.2 + chip_score * 0.15) DESC) AS score_rank
     FROM ranked_data
@@ -211,7 +212,7 @@ def _run_stock_score(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def run_full(start_date: int) -> None:
+def run_full(start_date: int, end_date: int | None = None) -> None:
     """Run full ADS ETL by processing each trade date to avoid lock overflow."""
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
@@ -220,13 +221,8 @@ def run_full(start_date: int) -> None:
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                cursor.execute(
-                    "SELECT DISTINCT cal_date FROM dim_trade_cal "
-                    "WHERE exchange='SSE' AND is_open=1 AND cal_date >= %s "
-                    "ORDER BY cal_date",
-                    (start_date,)
-                )
-                trade_dates = [row[0] for row in cursor.fetchall()]
+                trade_dates = list_trade_dates(cursor, start_date, end_date)
+
             
             total_dates = len(trade_dates)
             logging.info(f"Processing {total_dates} trade dates from {start_date}")
@@ -256,7 +252,7 @@ def run_full(start_date: int) -> None:
             raise
 
 
-def run_incremental() -> None:
+def run_incremental(start_date: int | None = None, end_date: int | None = None) -> None:
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -264,10 +260,19 @@ def run_incremental() -> None:
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                last_date = get_watermark(cursor, "ads")
+                if start_date:
+                    last_date = start_date - 1
+                else:
+                    last_date = get_watermark(cursor, "ads")
+
                 if last_date is None:
                     raise RuntimeError("missing watermark for ads")
-                trade_dates = list_trade_dates_after(cursor, last_date)
+                
+                if start_date:
+                    trade_dates = list_trade_dates(cursor, start_date, end_date)
+                else:
+                    trade_dates = list_trade_dates_after(cursor, last_date, end_date)
+
 
             for trade_date in trade_dates:
                 logging.info(f"Processing trade_date={trade_date}")

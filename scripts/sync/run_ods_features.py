@@ -4,8 +4,14 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
+
+# Add project scripts directory to sys.path to allow importing 'etl' package
+scripts_dir = Path(__file__).resolve().parents[1]
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
 
 import pandas as pd
 import tushare as ts
@@ -52,6 +58,19 @@ def parse_args() -> argparse.Namespace:
         default="margin,margin_detail,margin_target,moneyflow,moneyflow_ths,cyq_chips,cyq_perf,stk_factor",
         help="Comma-separated API list.",
     )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=True,
+        help="Skip dates that already have data in the database (default: True).",
+    )
+    parser.add_argument(
+        "--no-skip-existing",
+        action="store_false",
+        dest="skip_existing",
+        help="Disable skipping existing data.",
+    )
+
     return parser.parse_args()
 
 
@@ -298,6 +317,26 @@ def _list_ts_codes(cursor) -> List[str]:
     return [row[0] for row in cursor.fetchall()]
 
 
+def _fetch_existing_dates(cursor, table: str, start_date: int, end_date: int) -> set[int]:
+    """Fetch dates that already have data in the given table."""
+    try:
+        cursor.execute(f"SELECT DISTINCT trade_date FROM {table} WHERE trade_date BETWEEN %s AND %s", (start_date, end_date))
+        return {int(row[0]) for row in cursor.fetchall()}
+    except Exception:
+        return set()
+
+
+def _check_cyq_chips_exists(cursor, ts_code: str, start_date: int, end_date: int) -> bool:
+    """Check if cyq_chips data exists for a specific ts_code and date range."""
+    cursor.execute(
+        "SELECT 1 FROM ods_cyq_chips WHERE ts_code = %s AND trade_date BETWEEN %s AND %s LIMIT 1",
+        (ts_code, start_date, end_date)
+    )
+    return cursor.fetchone() is not None
+
+
+
+
 def _existing_tables(cursor, schema: str, tables: List[str]) -> set[str]:
     if not tables:
         return set()
@@ -332,7 +371,18 @@ def main() -> None:
     if args.config:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
-            config_path = (Path.cwd() / config_path).resolve()
+            # Try relative to CWD first
+            cwd_path = (Path.cwd() / config_path).resolve()
+            if cwd_path.exists():
+                config_path = cwd_path
+            else:
+                # Fallback to project root
+                root_path = (scripts_dir.parent / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+
         if not config_path.exists():
             raise RuntimeError(f"config file not found: {config_path}")
         os.environ["ETL_CONFIG_PATH"] = str(config_path)
@@ -413,10 +463,17 @@ def main() -> None:
                     for chunk_index, chunk in enumerate(cyq_chunks, start=1):
                         start_date = min(chunk)
                         end_date = max(chunk)
+                        if args.skip_existing:
+                            with conn.cursor() as cursor:
+                                if _check_cyq_chips_exists(cursor, ts_code, start_date, end_date):
+                                    logging.info(f"Skipping cyq_chips for {ts_code} {start_date}-{end_date} (data already exists)")
+                                    continue
+                        
                         print(
                             "Progress: cyq_chips chunk "
                             f"{chunk_index}/{len(cyq_chunks)} {start_date}-{end_date}"
                         )
+
                         try:
                             api_limiter = limiter_map.get(api_name, limiter)
                             api_limiter.wait()
@@ -449,9 +506,19 @@ def main() -> None:
                             continue
                 print("Completed cyq_chips")
                 continue
+            existing_dates = set()
+            if args.skip_existing:
+                with conn.cursor() as cursor:
+                    table = _table_for_api(api_name)
+                    existing_dates = _fetch_existing_dates(cursor, table, args.start_date, args.end_date)
+            
             for date_index, trade_date in enumerate(trade_dates, start=1):
+                if args.skip_existing and trade_date in existing_dates:
+                    logging.info(f"Skipping {api_name} for {trade_date} (data already exists)")
+                    continue
                 print(f"Progress: trade_date {date_index}/{total_dates} ({trade_date})")
                 print(f"Progress: api {api_index}/{total_apis} ({api_name}) for {trade_date}")
+
                 try:
                     df = fetcher(pro, limiter, trade_date)
                 except Exception as exc:

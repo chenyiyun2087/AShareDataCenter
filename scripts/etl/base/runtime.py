@@ -172,22 +172,33 @@ def get_watermark(cursor: pymysql.cursors.Cursor, api_name: str) -> Optional[int
     return None
 
 
-def list_trade_dates(cursor: pymysql.cursors.Cursor, start_date: int) -> List[int]:
+def list_trade_dates(cursor: pymysql.cursors.Cursor, start_date: int, end_date: Optional[int] = None) -> List[int]:
     sql = (
         "SELECT cal_date FROM dim_trade_cal "
-        "WHERE exchange='SSE' AND is_open=1 AND cal_date >= %s ORDER BY cal_date"
+        "WHERE exchange='SSE' AND is_open=1 AND cal_date >= %s "
     )
-    cursor.execute(sql, (start_date,))
+    params = [start_date]
+    if end_date:
+        sql += "AND cal_date <= %s "
+        params.append(end_date)
+    sql += "ORDER BY cal_date"
+    cursor.execute(sql, tuple(params))
     return [int(row[0]) for row in cursor.fetchall()]
 
 
-def list_trade_dates_after(cursor: pymysql.cursors.Cursor, last_date: int) -> List[int]:
+def list_trade_dates_after(cursor: pymysql.cursors.Cursor, last_date: int, end_date: Optional[int] = None) -> List[int]:
     sql = (
         "SELECT cal_date FROM dim_trade_cal "
-        "WHERE exchange='SSE' AND is_open=1 AND cal_date > %s ORDER BY cal_date"
+        "WHERE exchange='SSE' AND is_open=1 AND cal_date > %s "
     )
-    cursor.execute(sql, (last_date,))
+    params = [last_date]
+    if end_date:
+        sql += "AND cal_date <= %s "
+        params.append(end_date)
+    sql += "ORDER BY cal_date"
+    cursor.execute(sql, tuple(params))
     return [int(row[0]) for row in cursor.fetchall()]
+
 
 
 def get_latest_trade_date(cursor: pymysql.cursors.Cursor) -> Optional[int]:

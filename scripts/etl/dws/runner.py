@@ -31,65 +31,51 @@ from .enhanced_factors import (
 def _run_price_adj(cursor, trade_date: int | None = None) -> None:
     filter_sql = ""
     update_filter = ""
-    params = []
     if trade_date is not None:
+        # For single day, we only need a bit of lookback
+        lookback_sql = "WHERE trade_date >= (SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 70)"
         filter_sql = "WHERE d.trade_date = %s"
         update_filter = "WHERE cur.trade_date = %s"
-        params.append(trade_date)
+        insert_params = [trade_date, trade_date] # For lookback_sql (not used in insert) and target
+        update_params = [trade_date, trade_date]
+    else:
+        lookback_sql = ""
+        insert_params = []
+        update_params = []
+
     insert_sql = f"""
     INSERT INTO dws_price_adj_daily (
-      trade_date,
-      ts_code,
-      qfq_close,
-      qfq_ret_1,
-      qfq_ret_5,
-      qfq_ret_20,
-      qfq_ret_60
+      trade_date, ts_code, qfq_close, qfq_ret_1, qfq_ret_5, qfq_ret_20, qfq_ret_60
     )
     SELECT
-      d.trade_date,
-      d.ts_code,
+      d.trade_date, d.ts_code,
       ROUND(d.close * b.base_adj / a.adj_factor, 4) AS qfq_close,
-      NULL AS qfq_ret_1,
-      NULL AS qfq_ret_5,
-      NULL AS qfq_ret_20,
-      NULL AS qfq_ret_60
+      NULL, NULL, NULL, NULL
     FROM dwd_daily d
-    JOIN dwd_adj_factor a
-      ON a.trade_date = d.trade_date AND a.ts_code = d.ts_code
+    JOIN dwd_adj_factor a ON a.trade_date = d.trade_date AND a.ts_code = d.ts_code
     JOIN (
       SELECT af.ts_code, af.adj_factor AS base_adj
       FROM dwd_adj_factor af
-      JOIN (SELECT MAX(trade_date) AS base_date FROM dwd_daily) lt
-        ON af.trade_date = lt.base_date
-    ) b
-      ON b.ts_code = d.ts_code
+      JOIN (SELECT MAX(trade_date) AS base_date FROM dwd_daily) lt ON af.trade_date = lt.base_date
+    ) b ON b.ts_code = d.ts_code
     {filter_sql}
-    ON DUPLICATE KEY UPDATE
-      qfq_close = VALUES(qfq_close),
-      qfq_ret_1 = VALUES(qfq_ret_1),
-      qfq_ret_5 = VALUES(qfq_ret_5),
-      qfq_ret_20 = VALUES(qfq_ret_20),
-      qfq_ret_60 = VALUES(qfq_ret_60),
-      updated_at = CURRENT_TIMESTAMP;
+    ON DUPLICATE KEY UPDATE qfq_close = VALUES(qfq_close);
     """
-    cursor.execute(insert_sql, params)
+    cursor.execute(insert_sql, [trade_date] if trade_date else [])
 
     update_sql = f"""
     UPDATE dws_price_adj_daily cur
     JOIN (
       SELECT
-        trade_date,
-        ts_code,
-        qfq_close,
+        trade_date, ts_code, qfq_close,
         LAG(qfq_close, 1) OVER w AS prev_1,
         LAG(qfq_close, 5) OVER w AS prev_5,
         LAG(qfq_close, 20) OVER w AS prev_20,
         LAG(qfq_close, 60) OVER w AS prev_60
       FROM dws_price_adj_daily
+      {lookback_sql}
       WINDOW w AS (PARTITION BY ts_code ORDER BY trade_date)
-    ) hist
-      ON hist.trade_date = cur.trade_date AND hist.ts_code = cur.ts_code
+    ) hist ON hist.trade_date = cur.trade_date AND hist.ts_code = cur.ts_code
     SET
       cur.qfq_ret_1 = (cur.qfq_close / hist.prev_1) - 1,
       cur.qfq_ret_5 = CASE WHEN hist.prev_5 IS NULL THEN NULL ELSE (cur.qfq_close / hist.prev_5) - 1 END,
@@ -98,7 +84,7 @@ def _run_price_adj(cursor, trade_date: int | None = None) -> None:
       cur.updated_at = CURRENT_TIMESTAMP
     {update_filter};
     """
-    cursor.execute(update_sql, params)
+    cursor.execute(update_sql, update_params)
 
 
 def _run_fina_pit(cursor, trade_date: int | None = None) -> None:
@@ -154,119 +140,122 @@ def _run_fina_pit(cursor, trade_date: int | None = None) -> None:
 
 def _run_tech_pattern(cursor, trade_date: int | None = None) -> None:
     """Calculate technical pattern indicators: HMA, RSI, Bollinger Bands."""
-    filter_sql = ""
-    params = []
     if trade_date is not None:
-        filter_sql = "WHERE base.trade_date = %s"
-        params.append(trade_date)
+        lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 30)"
+        params = [trade_date, trade_date]
+        filter_clause = "WHERE base.trade_date = %s"
+    else:
+        lookback_date = "20100101"
+        params = []
+        filter_clause = ""
     
     sql = f"""
     INSERT INTO dws_tech_pattern (
         trade_date, ts_code, hma_5, hma_slope, rsi_14,
         boll_upper, boll_mid, boll_lower, boll_width
     )
-    SELECT
-        base.trade_date,
-        base.ts_code,
-        -- HMA approximation using available data (simplified)
-        base.adj_close AS hma_5,
-        (base.adj_close - LAG(base.adj_close, 1) OVER w) / NULLIF(LAG(base.adj_close, 1) OVER w, 0) AS hma_slope,
-        -- RSI from stk_factor if available
-        sf.rsi_bfq_12 AS rsi_14,
-        -- Bollinger Bands from stk_factor
-        sf.boll_upper_bfq AS boll_upper,
-        sf.boll_mid_bfq AS boll_mid,
-        sf.boll_lower_bfq AS boll_lower,
-        CASE WHEN sf.boll_mid_bfq > 0 
-             THEN (sf.boll_upper_bfq - sf.boll_lower_bfq) / sf.boll_mid_bfq 
-             ELSE NULL END AS boll_width
-    FROM dwd_stock_daily_standard base
-    LEFT JOIN ods_stk_factor sf ON sf.trade_date = base.trade_date AND sf.ts_code = base.ts_code
-    {filter_sql}
-    WINDOW w AS (PARTITION BY base.ts_code ORDER BY base.trade_date)
+    SELECT * FROM (
+        SELECT
+            base.trade_date,
+            base.ts_code,
+            base.adj_close AS hma_5,
+            (base.adj_close - LAG(base.adj_close, 1) OVER w) / NULLIF(LAG(base.adj_close, 1) OVER w, 0) AS hma_slope,
+            sf.rsi_bfq_12 AS rsi_14,
+            sf.boll_upper_bfq AS boll_upper,
+            sf.boll_mid_bfq AS boll_mid,
+            sf.boll_lower_bfq AS boll_lower,
+            CASE WHEN sf.boll_mid_bfq > 0 
+                 THEN (sf.boll_upper_bfq - sf.boll_lower_bfq) / sf.boll_mid_bfq 
+                 ELSE NULL END AS boll_width
+        FROM dwd_stock_daily_standard base
+        LEFT JOIN ods_stk_factor sf ON sf.trade_date = base.trade_date AND sf.ts_code = base.ts_code
+        WHERE base.trade_date >= {lookback_date}
+        WINDOW w AS (PARTITION BY base.ts_code ORDER BY base.trade_date)
+    ) base
+    {filter_clause}
     ON DUPLICATE KEY UPDATE
-        hma_5 = VALUES(hma_5),
-        hma_slope = VALUES(hma_slope),
-        rsi_14 = VALUES(rsi_14),
-        boll_upper = VALUES(boll_upper),
-        boll_mid = VALUES(boll_mid),
-        boll_lower = VALUES(boll_lower),
-        boll_width = VALUES(boll_width)
+        hma_5 = VALUES(hma_5), hma_slope = VALUES(hma_slope), rsi_14 = VALUES(rsi_14),
+        boll_upper = VALUES(boll_upper), boll_mid = VALUES(boll_mid),
+        boll_lower = VALUES(boll_lower), boll_width = VALUES(boll_width)
     """
-    cursor.execute(sql, params if params else None)
+    cursor.execute(sql, params)
 
 
 def _run_capital_flow(cursor, trade_date: int | None = None) -> None:
     """Calculate capital flow indicators from moneyflow data."""
-    filter_sql = ""
-    params = []
     if trade_date is not None:
-        filter_sql = "WHERE mf.trade_date = %s"
-        params.append(trade_date)
-    
+        lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 10)"
+        params = [trade_date, trade_date]
+        filter_clause = "WHERE base.trade_date = %s"
+    else:
+        lookback_date = "20100101"
+        params = []
+        filter_clause = ""
+
     sql = f"""
     INSERT INTO dws_capital_flow (
         trade_date, ts_code, main_net_inflow, main_net_ratio, main_net_ma5, vol_price_corr
     )
-    SELECT
-        mf.trade_date,
-        mf.ts_code,
-        (mf.buy_lg_amount + mf.buy_elg_amount - mf.sell_lg_amount - mf.sell_elg_amount) AS main_net_inflow,
-        CASE WHEN d.amount > 0 
-             THEN (mf.buy_lg_amount + mf.buy_elg_amount - mf.sell_lg_amount - mf.sell_elg_amount) / (d.amount / 10)
-             ELSE NULL END AS main_net_ratio,
-        AVG(mf.buy_lg_amount + mf.buy_elg_amount - mf.sell_lg_amount - mf.sell_elg_amount) 
-            OVER (PARTITION BY mf.ts_code ORDER BY mf.trade_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS main_net_ma5,
-        -- Volume-price correlation placeholder (simplified)
-        CASE WHEN d.pct_chg > 0 AND mf.net_mf_amount > 0 THEN 1
-             WHEN d.pct_chg < 0 AND mf.net_mf_amount < 0 THEN 1
-             ELSE -1 END AS vol_price_corr
-    FROM ods_moneyflow mf
-    JOIN dwd_daily d ON d.trade_date = mf.trade_date AND d.ts_code = mf.ts_code
-    {filter_sql}
+    SELECT * FROM (
+        SELECT
+            mf.trade_date,
+            mf.ts_code,
+            (mf.buy_lg_amount + mf.buy_elg_amount - mf.sell_lg_amount - mf.sell_elg_amount) AS main_net_inflow,
+            CASE WHEN d.amount > 0 
+                 THEN (mf.buy_lg_amount + mf.buy_elg_amount - mf.sell_lg_amount - mf.sell_elg_amount) / (d.amount / 10)
+                 ELSE NULL END AS main_net_ratio,
+            AVG(mf.buy_lg_amount + mf.buy_elg_amount - mf.sell_lg_amount - mf.sell_elg_amount) 
+                OVER (PARTITION BY mf.ts_code ORDER BY mf.trade_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS main_net_ma5,
+            CASE WHEN d.pct_chg > 0 AND mf.net_mf_amount > 0 THEN 1
+                 WHEN d.pct_chg < 0 AND mf.net_mf_amount < 0 THEN 1
+                 ELSE -1 END AS vol_price_corr
+        FROM ods_moneyflow mf
+        JOIN dwd_daily d ON d.trade_date = mf.trade_date AND d.ts_code = mf.ts_code
+        WHERE mf.trade_date >= {lookback_date}
+    ) base
+    {filter_clause}
     ON DUPLICATE KEY UPDATE
-        main_net_inflow = VALUES(main_net_inflow),
-        main_net_ratio = VALUES(main_net_ratio),
-        main_net_ma5 = VALUES(main_net_ma5),
-        vol_price_corr = VALUES(vol_price_corr)
+        main_net_inflow = VALUES(main_net_inflow), main_net_ratio = VALUES(main_net_ratio),
+        main_net_ma5 = VALUES(main_net_ma5), vol_price_corr = VALUES(vol_price_corr)
     """
-    cursor.execute(sql, params if params else None)
-
+    cursor.execute(sql, params)
 
 def _run_leverage_sentiment(cursor, trade_date: int | None = None) -> None:
     """Calculate leverage and sentiment indicators."""
-    filter_sql = ""
-    params = []
     if trade_date is not None:
-        filter_sql = "WHERE ms.trade_date = %s"
-        params.append(trade_date)
-    
+        lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 30)"
+        params = [trade_date, trade_date]
+        filter_clause = "WHERE base.trade_date = %s"
+    else:
+        lookback_date = "20100101"
+        params = []
+        filter_clause = ""
+
     sql = f"""
     INSERT INTO dws_leverage_sentiment (
         trade_date, ts_code, rz_buy_intensity, rz_concentration, rq_pressure_factor, turnover_spike
     )
-    SELECT
-        ms.trade_date,
-        ms.ts_code,
-        ms.rz_net_buy_ratio AS rz_buy_intensity,
-        -- Concentration placeholder (requires cross-stock calculation)
-        NULL AS rz_concentration,
-        ms.rq_pressure AS rq_pressure_factor,
-        -- Turnover spike: current turnover vs 20-day avg
-        CASE WHEN db.turnover_rate_f > 0 
-             THEN db.turnover_rate_f / NULLIF(
-                 AVG(db.turnover_rate_f) OVER (PARTITION BY ms.ts_code ORDER BY ms.trade_date ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING), 0)
-             ELSE NULL END AS turnover_spike
-    FROM dwd_margin_sentiment ms
-    LEFT JOIN dwd_daily_basic db ON db.trade_date = ms.trade_date AND db.ts_code = ms.ts_code
-    {filter_sql}
+    SELECT * FROM (
+        SELECT
+            ms.trade_date,
+            ms.ts_code,
+            ms.rz_net_buy_ratio AS rz_buy_intensity,
+            NULL AS rz_concentration,
+            ms.rq_pressure AS rq_pressure_factor,
+            CASE WHEN db.turnover_rate_f > 0 
+                 THEN db.turnover_rate_f / NULLIF(
+                     AVG(db.turnover_rate_f) OVER (PARTITION BY ms.ts_code ORDER BY ms.trade_date ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING), 0)
+                 ELSE NULL END AS turnover_spike
+        FROM dwd_margin_sentiment ms
+        LEFT JOIN dwd_daily_basic db ON db.trade_date = ms.trade_date AND db.ts_code = ms.ts_code
+        WHERE ms.trade_date >= {lookback_date}
+    ) base
+    {filter_clause}
     ON DUPLICATE KEY UPDATE
-        rz_buy_intensity = VALUES(rz_buy_intensity),
-        rz_concentration = VALUES(rz_concentration),
-        rq_pressure_factor = VALUES(rq_pressure_factor),
-        turnover_spike = VALUES(turnover_spike)
+        rz_buy_intensity = VALUES(rz_buy_intensity), rz_concentration = VALUES(rz_concentration),
+        rq_pressure_factor = VALUES(rq_pressure_factor), turnover_spike = VALUES(turnover_spike)
     """
-    cursor.execute(sql, params if params else None)
+    cursor.execute(sql, params)
 
 
 def _run_chip_dynamics(cursor, trade_date: int | None = None) -> None:
@@ -301,7 +290,7 @@ def _run_chip_dynamics(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def run_full(start_date: int) -> None:
+def run_full(start_date: int, end_date: int | None = None) -> None:
     """Run full DWS ETL by processing each trade date to avoid lock overflow."""
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
@@ -310,13 +299,8 @@ def run_full(start_date: int) -> None:
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                cursor.execute(
-                    "SELECT DISTINCT cal_date FROM dim_trade_cal "
-                    "WHERE exchange='SSE' AND is_open=1 AND cal_date >= %s "
-                    "ORDER BY cal_date",
-                    (start_date,)
-                )
-                trade_dates = [row[0] for row in cursor.fetchall()]
+                trade_dates = list_trade_dates(cursor, start_date, end_date)
+
             
             total_dates = len(trade_dates)
             logging.info(f"Processing {total_dates} trade dates from {start_date}")
@@ -357,7 +341,7 @@ def run_full(start_date: int) -> None:
             raise
 
 
-def run_incremental() -> None:
+def run_incremental(start_date: int | None = None, end_date: int | None = None) -> None:
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -365,10 +349,19 @@ def run_incremental() -> None:
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                last_date = get_watermark(cursor, "dws")
+                if start_date:
+                    last_date = start_date - 1
+                else:
+                    last_date = get_watermark(cursor, "dws")
+
                 if last_date is None:
                     raise RuntimeError("missing watermark for dws")
-                trade_dates = list_trade_dates_after(cursor, last_date)
+                
+                if start_date:
+                    trade_dates = list_trade_dates(cursor, start_date, end_date)
+                else:
+                    trade_dates = list_trade_dates_after(cursor, last_date, end_date)
+
 
             for trade_date in trade_dates:
                 logging.info(f"Processing trade_date={trade_date}")

@@ -231,10 +231,10 @@ def load_dwd_stock_label_daily(cursor, trade_date: int) -> None:
         ) < 60 THEN 1 ELSE 0 END AS is_new,
         -- 涨跌幅限制类型
         CASE 
-            WHEN s.ts_code LIKE '68%%' THEN 20    -- 科创板 20%
-            WHEN s.ts_code LIKE '30%%' THEN 20    -- 创业板 20%
-            WHEN s.ts_code LIKE '8%%' OR s.ts_code LIKE '4%%' THEN 30  -- 北交所 30%
-            ELSE 10  -- 主板 10%
+            WHEN s.ts_code LIKE '68%%' THEN 20    -- 科创板 20%%
+            WHEN s.ts_code LIKE '30%%' THEN 20    -- 创业板 20%%
+            WHEN s.ts_code LIKE '8%%' OR s.ts_code LIKE '4%%' THEN 30  -- 北交所 30%%
+            ELSE 10  -- 主板 10%%
         END AS limit_type,
         -- 市场类型
         CASE 
@@ -259,7 +259,7 @@ def load_dwd_stock_label_daily(cursor, trade_date: int) -> None:
     cursor.execute(sql, (trade_date, trade_date, trade_date))
 
 
-def run_full(start_date: int) -> None:
+def run_full(start_date: int, end_date: Optional[int] = None) -> None:
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -267,7 +267,8 @@ def run_full(start_date: int) -> None:
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                trade_dates = list_trade_dates(cursor, start_date)
+                trade_dates = list_trade_dates(cursor, start_date, end_date)
+
 
             total_dates = len(trade_dates)
             logging.info(f"Processing {total_dates} trade dates from {start_date}")
@@ -305,7 +306,7 @@ def run_full(start_date: int) -> None:
             raise
 
 
-def run_incremental() -> None:
+def run_incremental(start_date: Optional[int] = None, end_date: Optional[int] = None) -> None:
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -313,7 +314,11 @@ def run_incremental() -> None:
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                last_date = get_watermark(cursor, "dwd_daily")
+                if start_date:
+                    last_date = start_date - 1
+                else:
+                    last_date = get_watermark(cursor, "dwd_daily")
+
                 if last_date is None:
                     cursor.execute("SELECT MAX(trade_date) FROM dwd_daily")
                     row = cursor.fetchone()
@@ -335,7 +340,12 @@ def run_incremental() -> None:
                     ensure_watermark(cursor, "dwd_daily_basic", last_date)
                     ensure_watermark(cursor, "dwd_adj_factor", last_date)
                     conn.commit()
-                trade_dates = list_trade_dates_after(cursor, last_date)
+                
+                if start_date:
+                    trade_dates = list_trade_dates(cursor, start_date, end_date)
+                else:
+                    trade_dates = list_trade_dates_after(cursor, last_date, end_date)
+
 
             for trade_date in trade_dates:
                 logging.info(f"Processing trade_date={trade_date}")

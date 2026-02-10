@@ -4,7 +4,13 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
+
+# Add project scripts directory to sys.path to allow importing 'etl' package
+scripts_dir = Path(__file__).resolve().parents[1]
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
 from typing import Dict, List, Optional
 
 from etl.base.runtime import get_env_config, get_mysql_connection, list_trade_dates
@@ -31,6 +37,11 @@ def parse_args() -> argparse.Namespace:
         "--fail-on-missing",
         action="store_true",
         help="Exit with non-zero status when missing dates are detected.",
+    )
+    parser.add_argument(
+        "--ignore-today",
+        action="store_true",
+        help="Do not fail if today's data is missing (handles TuShare data lag).",
     )
     parser.add_argument(
         "--tables",
@@ -64,7 +75,18 @@ def main() -> None:
     if args.config:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
-            config_path = (Path.cwd() / config_path).resolve()
+            # Try relative to CWD first
+            cwd_path = (Path.cwd() / config_path).resolve()
+            if cwd_path.exists():
+                config_path = cwd_path
+            else:
+                # Fallback to project root
+                root_path = (scripts_dir.parent / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+
         if not config_path.exists():
             raise RuntimeError(f"config file not found: {config_path}")
         os.environ["ETL_CONFIG_PATH"] = str(config_path)
@@ -95,6 +117,12 @@ def main() -> None:
                     continue
                 present_dates = set(_fetch_dates(cursor, table, date_col, args.start_date, args.end_date))
                 missing_dates = [d for d in expected_dates if d not in present_dates]
+                
+                if args.ignore_today:
+                    from datetime import datetime
+                    today_int = int(datetime.now().strftime("%Y%m%d"))
+                    missing_dates = [d for d in missing_dates if d != today_int]
+
                 cursor.execute(
                     f"SELECT COUNT(*) FROM {table} WHERE {date_col} BETWEEN %s AND %s",
                     [args.start_date, args.end_date],

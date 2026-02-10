@@ -3,7 +3,12 @@
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pathlib import Path
+
+# Add project scripts directory to sys.path to allow importing 'etl' package
+scripts_dir = Path(__file__).resolve().parents[1]
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
 
 from etl.base.runtime import get_env_config, get_mysql_connection
 from etl.dwd.runner import (
@@ -92,8 +97,25 @@ def backfill_ads(conn):
 
 def main():
     args = parse_args()
-    os.environ["ETL_CONFIG"] = args.config
-    print(f"Using config: {args.config}")
+    if args.config:
+        config_path = Path(args.config).expanduser()
+        if not config_path.is_absolute():
+            # Try relative to CWD first
+            cwd_path = (Path.cwd() / config_path).resolve()
+            if cwd_path.exists():
+                config_path = cwd_path
+            else:
+                # Fallback to project root
+                root_path = (scripts_dir.parent / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+
+        if not config_path.exists():
+            raise RuntimeError(f"config file not found: {config_path}")
+        os.environ["ETL_CONFIG_PATH"] = str(config_path)
+    print(f"Using config: {os.environ.get('ETL_CONFIG_PATH')}")
     
     cfg = get_env_config()
     with get_mysql_connection(cfg) as conn:

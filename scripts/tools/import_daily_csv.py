@@ -7,6 +7,12 @@ from typing import Iterable, List
 
 import numpy as np
 import pandas as pd
+import sys
+
+# Add project scripts directory to sys.path to allow importing 'etl' package
+scripts_dir = Path(__file__).resolve().parents[1]
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
 
 from etl.base import runtime
 
@@ -134,10 +140,22 @@ def main() -> None:
         raise SystemExit(f"Folder not found: {folder}")
     config_path = Path(args.config).expanduser()
     if not config_path.is_absolute():
-        config_path = (Path.cwd() / config_path).resolve()
+        # Try relative to CWD first
+        cwd_path = (Path.cwd() / config_path).resolve()
+        if cwd_path.exists():
+            config_path = cwd_path
+        else:
+            # Fallback to project root
+            root_path = (scripts_dir.parent / config_path).resolve()
+            if root_path.exists():
+                config_path = root_path
+            else:
+                config_path = cwd_path
+
     if not config_path.exists():
         raise SystemExit(f"Config file not found: {config_path}")
     runtime.DEFAULT_CONFIG_PATH = str(config_path)
+    os.environ["ETL_CONFIG_PATH"] = str(config_path)
     cfg = runtime.get_env_config()
     if any([args.host, args.port, args.user, args.password, args.database]):
         cfg = runtime.MysqlConfig(

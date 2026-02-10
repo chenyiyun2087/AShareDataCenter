@@ -2,7 +2,13 @@
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
+
+# Add project scripts directory to sys.path to allow importing 'etl' package
+scripts_dir = Path(__file__).resolve().parents[1]
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
 
 from etl.dws import run_full, run_incremental
 from etl.base.runtime import ensure_watermark, get_env_config, get_mysql_connection, get_watermark
@@ -12,7 +18,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="DWS layer ETL")
     parser.add_argument("--mode", choices=["full", "incremental"], default="incremental")
     parser.add_argument("--start-date", type=int, default=20100101)
+    parser.add_argument("--end-date", type=int)
     parser.add_argument("--config", default=None, help="Path to etl.ini")
+
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--user", default=None)
@@ -33,7 +41,18 @@ def main() -> None:
     if args.config:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
-            config_path = (Path.cwd() / config_path).resolve()
+            # Try relative to CWD first
+            cwd_path = (Path.cwd() / config_path).resolve()
+            if cwd_path.exists():
+                config_path = cwd_path
+            else:
+                # Fallback to project root
+                root_path = (scripts_dir.parent / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+
         if not config_path.exists():
             raise RuntimeError(f"config file not found: {config_path}")
         os.environ["ETL_CONFIG_PATH"] = str(config_path)
@@ -56,9 +75,10 @@ def main() -> None:
                     ensure_watermark(cursor, "dws", args.start_date - 1)
                     conn.commit()
     if args.mode == "full":
-        run_full(args.start_date)
+        run_full(args.start_date, args.end_date)
     else:
-        run_incremental()
+        run_incremental(args.start_date if "start_date" in args and args.start_date != 20100101 else None, args.end_date)
+
 
     logging.info("DWS ETL completed successfully")
 

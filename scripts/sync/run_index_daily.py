@@ -36,11 +36,24 @@ def main() -> None:
     args = parse_args()
     
     # Resolve config path relative to project root
-    project_root = Path(__file__).resolve().parent.parent.parent
-    config_path = Path(args.config).expanduser()
-    if not config_path.is_absolute():
-        config_path = (project_root / config_path).resolve()
-    os.environ["ETL_CONFIG_PATH"] = str(config_path)
+    if args.config:
+        config_path = Path(args.config).expanduser()
+        if not config_path.is_absolute():
+            # Try relative to CWD first
+            cwd_path = (Path.cwd() / config_path).resolve()
+            if cwd_path.exists():
+                config_path = cwd_path
+            else:
+                # Fallback to project root
+                root_path = (scripts_dir.parent / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+
+        if not config_path.exists():
+            raise RuntimeError(f"config file not found: {config_path}")
+        os.environ["ETL_CONFIG_PATH"] = str(config_path)
     
     # Read config file
     if not config_path.exists():

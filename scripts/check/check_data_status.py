@@ -3,9 +3,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
+
+# Add project scripts directory to sys.path to allow importing 'etl' package
+scripts_dir = Path(__file__).resolve().parents[1]
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
 
 from etl.base.runtime import get_env_config, get_mysql_connection
 
@@ -15,6 +21,7 @@ class TableCheck:
     name: str
     date_column: str
     category: str
+    optional: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,6 +78,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Exit with non-zero status when any selected table is stale or empty.",
     )
+    parser.add_argument(
+        "--ignore-today",
+        action="store_true",
+        help="Do not fail if today's data is missing (handles TuShare data lag).",
+    )
     return parser.parse_args()
 
 
@@ -78,7 +90,18 @@ def _apply_config_args(args: argparse.Namespace) -> None:
     if args.config:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
-            config_path = (Path.cwd() / config_path).resolve()
+            # Try relative to CWD first
+            cwd_path = (Path.cwd() / config_path).resolve()
+            if cwd_path.exists():
+                config_path = cwd_path
+            else:
+                # Fallback to project root
+                root_path = (scripts_dir.parent / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+
         if not config_path.exists():
             raise RuntimeError(f"config file not found: {config_path}")
         os.environ["ETL_CONFIG_PATH"] = str(config_path)
@@ -136,15 +159,17 @@ def _resolve_threshold(
     expected_trade_date: Optional[int],
     args: argparse.Namespace,
 ) -> Optional[int]:
-    if table.category == "ods":
-        return args.min_ods_date or args.min_date or expected_trade_date
-    if table.category == "features":
-        return args.min_feature_date or args.min_date or expected_trade_date
-    if table.category == "financial":
-        if table.date_column == "ann_date":
-            return args.min_fina_ann_date or args.min_date
-        return args.min_fina_trade_date or args.min_date or expected_trade_date
-    return args.min_date or expected_trade_date
+    threshold = args.min_date or expected_trade_date
+    
+    if args.ignore_today and threshold is not None:
+        from datetime import datetime
+        today_int = int(datetime.now().strftime("%Y%m%d"))
+        if threshold == today_int:
+            # If threshold is today and we ignore today, we don't have a strict threshold for 'OK'
+            # We can return None or a 'soft' threshold. Let's return None to skip STALE check.
+            return None
+            
+    return threshold
 
 
 def _print_group_header(title: str) -> None:
@@ -158,11 +183,13 @@ def _print_table_rows(
     tables: Iterable[TableCheck],
     expected_trade_date: Optional[int],
     args: argparse.Namespace,
-) -> List[tuple[str, str]]:
+) -> List[tuple[str, str, bool]]:
+    """Returns a list of (table_name, status, is_failure)."""
     header = f"{'table':<28} {'max_date':<10} {'rows':<10} {'updated_at':<20} {'status':<8} {'threshold':<10}"
     print(header)
     print("-" * len(header))
-    statuses: List[tuple[str, str]] = []
+    results: List[tuple[str, str, bool]] = []
+    
     for table in tables:
         max_date, total_rows, updated_at = _fetch_table_stats(cursor, table)
         threshold = _resolve_threshold(
@@ -171,12 +198,21 @@ def _print_table_rows(
             args=args,
         )
         status = _status_for_date(max_date, threshold)
-        statuses.append((table.name, status))
+        
+        is_failure = False
+        if status in {"STALE", "EMPTY"}:
+            if table.optional:
+                status += "*"  # Mark as optional failure
+            else:
+                is_failure = True
+
+        results.append((table.name, status, is_failure))
+        
         print(
             f"{table.name:<28} {str(max_date):<10} {total_rows:<10} "
             f"{str(updated_at):<20} {status:<8} {str(threshold):<10}"
         )
-    return statuses
+    return results
 
 
 def _print_watermarks(cursor, api_names: List[str]) -> None:
@@ -228,7 +264,7 @@ def main() -> None:
         # New DWD tables
         TableCheck("dwd_stock_daily_standard", "trade_date", "dwd"),
         TableCheck("dwd_fina_snapshot", "trade_date", "dwd"),
-        TableCheck("dwd_margin_sentiment", "trade_date", "dwd"),
+        TableCheck("dwd_margin_sentiment", "trade_date", "dwd", optional=True),  # T+1
         TableCheck("dwd_chip_stability", "trade_date", "dwd"),
         TableCheck("dwd_stock_label_daily", "trade_date", "dwd"),
     ]
@@ -237,7 +273,7 @@ def main() -> None:
         # New DWS tables
         TableCheck("dws_tech_pattern", "trade_date", "dws"),
         TableCheck("dws_capital_flow", "trade_date", "dws"),
-        TableCheck("dws_leverage_sentiment", "trade_date", "dws"),
+        TableCheck("dws_leverage_sentiment", "trade_date", "dws", optional=True),  # T+1
         TableCheck("dws_chip_dynamics", "trade_date", "dws"),
         # Enhanced factors
         TableCheck("dws_liquidity_factor", "trade_date", "dws"),
@@ -285,7 +321,7 @@ def main() -> None:
                     expected_trade_date=expected_trade_date,
                     args=args,
                 )
-                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+                failures.extend([name for name, _, is_fail in statuses if is_fail])
 
             if selected is None or "financial" in selected:
                 _print_group_header("Financial Tables")
@@ -295,7 +331,7 @@ def main() -> None:
                     expected_trade_date=expected_trade_date,
                     args=args,
                 )
-                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+                failures.extend([name for name, _, is_fail in statuses if is_fail])
 
             if selected is None or "features" in selected:
                 _print_group_header("Feature Tables")
@@ -305,7 +341,7 @@ def main() -> None:
                     expected_trade_date=expected_trade_date,
                     args=args,
                 )
-                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+                failures.extend([name for name, _, is_fail in statuses if is_fail])
 
             if selected is None or "dwd" in selected:
                 _print_group_header("DWD Tables")
@@ -315,7 +351,7 @@ def main() -> None:
                     expected_trade_date=expected_trade_date,
                     args=args,
                 )
-                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+                failures.extend([name for name, _, is_fail in statuses if is_fail])
 
             if selected is None or "dws" in selected:
                 _print_group_header("DWS Tables")
@@ -325,7 +361,7 @@ def main() -> None:
                     expected_trade_date=expected_trade_date,
                     args=args,
                 )
-                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+                failures.extend([name for name, _, is_fail in statuses if is_fail])
 
             if selected is None or "ads" in selected:
                 _print_group_header("ADS Tables")
@@ -335,7 +371,7 @@ def main() -> None:
                     expected_trade_date=expected_trade_date,
                     args=args,
                 )
-                failures.extend([name for name, status in statuses if status in {"STALE", "EMPTY"}])
+                failures.extend([name for name, _, is_fail in statuses if is_fail])
 
     if failures and args.fail_on_stale:
         raise SystemExit(f"Stale/empty tables detected: {', '.join(sorted(set(failures)))}")

@@ -39,8 +39,34 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _apply_config(config: Optional[str]) -> None:
+    if not config:
+        return
+    config_path = Path(config).expanduser()
+    if not config_path.is_absolute():
+        # Try relative to CWD first
+        cwd_path = (Path.cwd() / config_path).resolve()
+        if cwd_path.exists():
+            config_path = cwd_path
+        else:
+            # Fallback to project root
+            if PROJECT_ROOT.exists():
+                root_path = (PROJECT_ROOT / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+            else:
+                config_path = cwd_path
+
+    if not config_path.exists():
+        raise RuntimeError(f"config file not found: {config_path}")
+    os.environ["ETL_CONFIG_PATH"] = str(config_path)
+
+
 def main() -> None:
     args = parse_args()
+    _apply_config(args.config)
     logger.info(f"Fama-French 评分启动: {args}")
     
     # 延迟导入，确保路径设置完成

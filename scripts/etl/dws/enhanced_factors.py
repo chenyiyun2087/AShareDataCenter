@@ -3,6 +3,20 @@ Enhanced factor calculations for Phase 1.
 Includes: liquidity, momentum extended, quality extended, risk factors.
 """
 from __future__ import annotations
+import logging
+from typing import Optional
+
+
+def _get_lookback_date(cursor, target_date: int, days: int) -> int:
+    """Get the trade date N trading days ago."""
+    sql = (
+        "SELECT cal_date FROM dim_trade_cal "
+        "WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s "
+        "ORDER BY cal_date DESC LIMIT 1 OFFSET %s"
+    )
+    cursor.execute(sql, (target_date, days))
+    row = cursor.fetchone()
+    return int(row[0]) if row else 20100101
 
 
 def run_liquidity_factor(cursor, trade_date: int) -> None:
@@ -43,21 +57,25 @@ def run_liquidity_factor(cursor, trade_date: int) -> None:
                  ELSE NULL END AS vol_concentration
         FROM dwd_daily d
         LEFT JOIN dwd_daily_basic db ON db.trade_date = d.trade_date AND db.ts_code = d.ts_code
+        WHERE d.trade_date >= %s
         WINDOW 
             w5 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW),
             w20 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)
     ) liq ON liq.trade_date = base.trade_date AND liq.ts_code = base.ts_code
     WHERE base.trade_date = %s
+
     ON DUPLICATE KEY UPDATE
         turnover_vol_20 = VALUES(turnover_vol_20),
         amihud_20 = VALUES(amihud_20),
         vol_concentration = VALUES(vol_concentration),
         bid_ask_spread = VALUES(bid_ask_spread)
     """
-    cursor.execute(sql, (trade_date,))
+    start_date = _get_lookback_date(cursor, trade_date, 60)
+    cursor.execute(sql, (start_date, trade_date))
 
 
 def run_momentum_extended(cursor, trade_date: int) -> None:
+
     """Calculate extended momentum factors."""
     sql = """
     INSERT INTO dws_momentum_extended (
@@ -90,50 +108,67 @@ def run_momentum_extended(cursor, trade_date: int) -> None:
             NULL AS vol_price_corr
         FROM dwd_daily d
         LEFT JOIN dws_price_adj_daily adj ON adj.trade_date = d.trade_date AND adj.ts_code = d.ts_code
+        WHERE d.trade_date >= %s
         WINDOW 
             w AS (PARTITION BY d.ts_code ORDER BY d.trade_date),
             w250 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 249 PRECEDING AND CURRENT ROW)
     ) mom ON mom.trade_date = base.trade_date AND mom.ts_code = base.ts_code
     WHERE base.trade_date = %s
+
     ON DUPLICATE KEY UPDATE
         high_52w_dist = VALUES(high_52w_dist),
         reversal_5 = VALUES(reversal_5),
         mom_12m_1m = VALUES(mom_12m_1m),
         vol_price_corr = VALUES(vol_price_corr)
     """
-    cursor.execute(sql, (trade_date,))
+    start_date = _get_lookback_date(cursor, trade_date, 300)
+    cursor.execute(sql, (start_date, trade_date))
 
 
 def run_quality_extended(cursor, trade_date: int) -> None:
+
     """Calculate extended quality factors (DuPont decomposition)."""
     sql = """
     INSERT INTO dws_quality_extended (
         trade_date, ts_code, dupont_margin, dupont_turnover, dupont_leverage, roe_trend
     )
     SELECT 
-        f.trade_date,
-        f.ts_code,
-        -- 杜邦-净利率
-        fi.netprofit_margin AS dupont_margin,
-        -- 杜邦-资产周转率 = 营收/总资产
-        CASE WHEN fi.total_assets > 0 THEN fi.op_income / fi.total_assets ELSE NULL END AS dupont_turnover,
-        -- 杜邦-财务杠杆 = 总资产/股东权益
-        CASE WHEN fi.total_hldr_eqy > 0 THEN fi.total_assets / fi.total_hldr_eqy ELSE NULL END AS dupont_leverage,
-        -- ROE趋势 (同比变化) - 简化版，用季度差
-        f.roe - LAG(f.roe, 4) OVER (PARTITION BY f.ts_code ORDER BY f.trade_date) AS roe_trend
-    FROM dws_fina_pit_daily f
-    LEFT JOIN dwd_fina_indicator fi ON fi.ts_code = f.ts_code AND fi.end_date = f.end_date
-    WHERE f.trade_date = %s
+        base.trade_date,
+        base.ts_code,
+        base.dupont_margin,
+        base.dupont_turnover,
+        base.dupont_leverage,
+        base.roe_trend
+    FROM (
+        SELECT 
+            f.trade_date,
+            f.ts_code,
+            -- 杜邦-净利率
+            fi.netprofit_margin AS dupont_margin,
+            -- 杜邦-资产周转率 = 营收/总资产
+            CASE WHEN fi.total_assets > 0 THEN fi.op_income / fi.total_assets ELSE NULL END AS dupont_turnover,
+            -- 杜邦-财务杠杆 = 总资产/股东权益
+            CASE WHEN fi.total_hldr_eqy > 0 THEN fi.total_assets / fi.total_hldr_eqy ELSE NULL END AS dupont_leverage,
+            -- ROE趋势 (同比变化) - 简化版，用季度差
+            f.roe - LAG(f.roe, 4) OVER (PARTITION BY f.ts_code ORDER BY f.trade_date) AS roe_trend
+        FROM dws_fina_pit_daily f
+        LEFT JOIN dwd_fina_indicator fi ON fi.ts_code = f.ts_code AND fi.end_date = f.end_date
+        WHERE f.trade_date >= %s
+    ) base
+    WHERE base.trade_date = %s
+
     ON DUPLICATE KEY UPDATE
         dupont_margin = VALUES(dupont_margin),
         dupont_turnover = VALUES(dupont_turnover),
         dupont_leverage = VALUES(dupont_leverage),
         roe_trend = VALUES(roe_trend)
     """
-    cursor.execute(sql, (trade_date,))
+    start_date = _get_lookback_date(cursor, trade_date, 400) # Need enough history for LAG(4)
+    cursor.execute(sql, (start_date, trade_date))
 
 
 def run_risk_factor(cursor, trade_date: int) -> None:
+
     """Calculate risk factors (downside vol, max drawdown, VaR)."""
     sql = """
     INSERT INTO dws_risk_factor (
@@ -156,13 +191,15 @@ def run_risk_factor(cursor, trade_date: int) -> None:
             STDDEV_SAMP(CASE WHEN d.pct_chg < 0 THEN d.pct_chg ELSE NULL END) OVER w60 AS downside_vol_60,
             -- 最大回撤 (60日)
             (MAX(adj.qfq_close) OVER w60 - adj.qfq_close) / NULLIF(MAX(adj.qfq_close) OVER w60, 0) AS max_drawdown_60,
-            -- VaR 5% (简化: 用PERCENT_RANK近似)
-            PERCENTILE_CONT(0.05) WITHIN GROUP (ORDER BY d.pct_chg) OVER w60 AS var_5pct_60
+            -- VaR 5%% (简化: MySQL不支持PERCENTILE_CONT)
+            NULL AS var_5pct_60
         FROM dwd_daily d
         LEFT JOIN dws_price_adj_daily adj ON adj.trade_date = d.trade_date AND adj.ts_code = d.ts_code
+        WHERE d.trade_date >= %s
         WINDOW w60 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)
     ) risk ON risk.trade_date = base.trade_date AND risk.ts_code = base.ts_code
     WHERE base.trade_date = %s
+
     ON DUPLICATE KEY UPDATE
         downside_vol_60 = VALUES(downside_vol_60),
         max_drawdown_60 = VALUES(max_drawdown_60),
@@ -170,4 +207,6 @@ def run_risk_factor(cursor, trade_date: int) -> None:
         beta_60 = VALUES(beta_60),
         ivol_20 = VALUES(ivol_20)
     """
-    cursor.execute(sql, (trade_date,))
+    start_date = _get_lookback_date(cursor, trade_date, 100)
+    cursor.execute(sql, (start_date, trade_date))
+

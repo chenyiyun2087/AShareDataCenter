@@ -30,9 +30,26 @@ def main():
     parser.add_argument("--debug", action="store_true", help="调试模式")
     args = parser.parse_args()
     
-    # 设置配置路径环境变量
-    os.environ["ETL_CONFIG_PATH"] = args.config
-    print(f"📋 使用配置: {args.config}")
+    if args.config:
+        config_path = Path(args.config).expanduser()
+        if not config_path.is_absolute():
+            # Try relative to CWD first
+            cwd_path = (Path.cwd() / config_path).resolve()
+            if cwd_path.exists():
+                config_path = cwd_path
+            else:
+                # Fallback to project root
+                root_path = (PROJECT_ROOT / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+
+        if not config_path.exists():
+            print(f"⚠️ Warning: Config file not found at {config_path}. Falling back to default resolution.")
+        else:
+            os.environ["ETL_CONFIG_PATH"] = str(config_path)
+            print(f"📋 使用配置: {os.environ.get('ETL_CONFIG_PATH')}")
     
     from etl.web.app import app
     

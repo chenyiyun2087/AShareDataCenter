@@ -9,6 +9,12 @@ import time
 from pathlib import Path
 from typing import Optional
 
+# Add project scripts directory to sys.path to allow importing 'etl' package
+scripts_dir = Path(__file__).resolve().parents[1]
+project_root = scripts_dir.parent
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
+
 from etl.base.runtime import get_env_config, get_mysql_connection, get_tushare_limit, get_tushare_token
 
 
@@ -34,6 +40,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose debug output for each step.",
     )
+    parser.add_argument(
+        "--lenient",
+        action="store_true",
+        help="Ignore missing today's data in checks (handles TuShare data lag).",
+    )
     return parser.parse_args()
 
 
@@ -42,7 +53,18 @@ def _apply_config(config: Optional[str]) -> None:
         return
     config_path = Path(config).expanduser()
     if not config_path.is_absolute():
-        config_path = (Path.cwd() / config_path).resolve()
+        # Try relative to CWD first
+        cwd_path = (Path.cwd() / config_path).resolve()
+        if cwd_path.exists():
+            config_path = cwd_path
+        else:
+            # Fallback to project root
+            root_path = (scripts_dir.parent / config_path).resolve()
+            if root_path.exists():
+                config_path = root_path
+            else:
+                config_path = cwd_path # Let it fail with CWD path if both missing
+
     if not config_path.exists():
         raise RuntimeError(f"config file not found: {config_path}")
     os.environ["ETL_CONFIG_PATH"] = str(config_path)
@@ -70,8 +92,12 @@ def _latest_trade_date() -> Optional[int]:
 def _run_step(label: str, cmd: list[str], debug: bool) -> None:
     print(f"\n[{label}] {' '.join(cmd)}")
     start = time.perf_counter()
+    # Ensure subprocess can find 'etl' package
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(scripts_dir) + os.pathsep + env.get("PYTHONPATH", "")
+    
     try:
-        result = subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, check=True, env=env)
     except subprocess.CalledProcessError as exc:
         elapsed = time.perf_counter() - start
         print(f"[{label}] failed in {elapsed:.2f}s with exit code {exc.returncode}")
@@ -111,18 +137,23 @@ def main() -> None:
         print(f"Resolved start_date={start_date} end_date={end_date}")
         print(f"Resolved rate_limit={rate_limit}")
 
+    def get_script(rel_path: str) -> str:
+        return str((project_root / rel_path).resolve())
+
     _run_step(
         "ODS incremental",
         base_cmd
-        + ["scripts/run_ods.py", "--mode", "incremental", "--rate-limit", str(rate_limit)]
+        + [get_script("scripts/sync/run_ods.py"), "--mode", "incremental", "--rate-limit", str(rate_limit)]
         + base_config
         + ["--token", token],
         args.debug,
     )
+    lenient_config = base_config + (["--ignore-today"] if args.lenient else [])
+
     _run_step(
         "Check ODS",
         base_cmd
-        + ["scripts/check_ods.py", "--expected-trade-date", str(expected_trade_date)]
+        + [get_script("scripts/check/check_ods.py"), "--expected-trade-date", str(expected_trade_date)]
         + base_config,
         args.debug,
     )
@@ -131,7 +162,7 @@ def main() -> None:
         "ODS features incremental",
         base_cmd
         + [
-            "scripts/run_ods_features.py",
+            get_script("scripts/sync/run_ods_features.py"),
             "--start-date",
             str(start_date),
             "--end-date",
@@ -151,14 +182,14 @@ def main() -> None:
         "Check ODS features",
         base_cmd
         + [
-            "scripts/check_ods_features.py",
+            get_script("scripts/check/check_ods_features.py"),
             "--start-date",
             str(start_date),
             "--end-date",
             str(end_date),
             "--fail-on-missing",
         ]
-        + base_config,
+        + lenient_config,
         args.debug,
     )
 
@@ -167,7 +198,7 @@ def main() -> None:
             "ODS fina incremental",
             base_cmd
             + [
-                "scripts/run_ods.py",
+                get_script("scripts/sync/run_ods.py"),
                 "--mode",
                 "incremental",
                 "--fina-start",
@@ -185,74 +216,98 @@ def main() -> None:
             "Check fina status",
             base_cmd
             + [
-                "scripts/check_data_status.py",
+                get_script("scripts/check/check_data_status.py"),
                 "--categories",
                 "financial",
                 "--fail-on-stale",
                 "--min-fina-ann-date",
                 str(args.fina_end),
             ]
-            + base_config,
+            + lenient_config,
             args.debug,
         )
 
+    # 5. DWD incremental
+    dwd_args = ["--mode", "incremental"]
+    if args.start_date:
+        dwd_args += ["--start-date", str(args.start_date)]
+    if args.end_date:
+        dwd_args += ["--end-date", str(args.end_date)]
+
     _run_step(
         "DWD incremental",
-        base_cmd + ["scripts/run_dwd.py", "--mode", "incremental"] + base_config,
+        base_cmd + [get_script("scripts/sync/run_dwd.py")] + dwd_args + base_config,
         args.debug,
     )
+
     _run_step(
         "Check DWD",
         base_cmd
         + [
-            "scripts/check_data_status.py",
+            get_script("scripts/check/check_data_status.py"),
             "--categories",
             "dwd",
             "--fail-on-stale",
             "--expected-trade-date",
             str(expected_trade_date),
         ]
-        + base_config,
+        + lenient_config,
+        args.debug,
+    )
+
+    # 6. DWS incremental
+    dws_args = ["--mode", "incremental"]
+    if args.start_date:
+        dws_args += ["--start-date", str(args.start_date)]
+    if args.end_date:
+        dws_args += ["--end-date", str(args.end_date)]
+
+    _run_step(
+        "DWS incremental",
+        base_cmd + [get_script("scripts/sync/run_dws.py")] + dws_args + base_config,
         args.debug,
     )
 
     _run_step(
-        "DWS incremental",
-        base_cmd + ["scripts/run_dws.py", "--mode", "incremental"] + base_config,
-        args.debug,
-    )
-    _run_step(
         "Check DWS",
         base_cmd
         + [
-            "scripts/check_data_status.py",
+            get_script("scripts/check/check_data_status.py"),
             "--categories",
             "dws",
             "--fail-on-stale",
             "--expected-trade-date",
             str(expected_trade_date),
         ]
-        + base_config,
+        + lenient_config,
+        args.debug,
+    )
+
+    # 7. ADS incremental
+    ads_args = ["--mode", "incremental"]
+    if args.start_date:
+        ads_args += ["--start-date", str(args.start_date)]
+    if args.end_date:
+        ads_args += ["--end-date", str(args.end_date)]
+
+    _run_step(
+        "ADS incremental",
+        base_cmd + [get_script("scripts/sync/run_ads.py")] + ads_args + base_config,
         args.debug,
     )
 
     _run_step(
-        "ADS incremental",
-        base_cmd + ["scripts/run_ads.py", "--mode", "incremental"] + base_config,
-        args.debug,
-    )
-    _run_step(
         "Check ADS",
         base_cmd
         + [
-            "scripts/check_data_status.py",
+            get_script("scripts/check/check_data_status.py"),
             "--categories",
             "ads",
             "--fail-on-stale",
             "--expected-trade-date",
             str(expected_trade_date),
         ]
-        + base_config,
+        + lenient_config,
         args.debug,
     )
 

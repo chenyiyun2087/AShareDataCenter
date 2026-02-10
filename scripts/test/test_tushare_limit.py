@@ -3,9 +3,16 @@ import time
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
 import tushare as ts
 from requests import exceptions as requests_exceptions
+
+# Add project scripts directory to sys.path to allow importing 'etl' package
+scripts_dir = Path(__file__).resolve().parents[1]
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
+
 from etl.base.runtime import get_tushare_token
 
 def test_rate(token: str, rate_limit: int, duration_sec: int = 10) -> bool:
@@ -45,7 +52,18 @@ def main():
     if args.config:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
-            config_path = (Path.cwd() / config_path).resolve()
+            # Try relative to CWD first
+            cwd_path = (Path.cwd() / config_path).resolve()
+            if cwd_path.exists():
+                config_path = cwd_path
+            else:
+                # Fallback to project root
+                root_path = (scripts_dir.parent / config_path).resolve()
+                if root_path.exists():
+                    config_path = root_path
+                else:
+                    config_path = cwd_path
+
         if not config_path.exists():
             print(f"Error: config file not found: {config_path}")
             return
