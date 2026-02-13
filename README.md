@@ -68,6 +68,16 @@
    # 再启动 Flask 服务（会托管 app/dist）
    python scripts/run_web.py --host 0.0.0.0 --port 5000
    ```
+
+## 跑批稳定性加固与扩容
+
+新增稳定性工具：
+
+- 失败类型统计：`python scripts/check/batch_failure_stats.py --hours 24`
+- 重试与幂等保护：`python scripts/schedule/stability_guard.py --task-name ... --idempotency-key ... -- --command`
+- 看板与报警：`python scripts/check/batch_slo_dashboard.py --hours 24`
+- 方案说明：`docs/batch_stability_hardening.md`
+
 ## 前端开发联调（可选）
 
 如需使用 Vite 开发服务器联调（前端与后端不同端口），可通过环境变量指定后端地址：
