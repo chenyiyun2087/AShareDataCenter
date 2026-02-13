@@ -409,3 +409,24 @@ To automate this year-by-year execution, use the provided batch script with requ
   ps aux | grep python | grep -v grep
   ```
 
+
+#### Q3: 定时任务长期未运行 / 僵死 (Process Stucked / Not Running)
+**现象**: `logs/cron_*.log` 长时间无新日志，数据库 `meta_etl_run_log` 中有任务长期处于 `RUNNING` 状态（超过数小时）。
+**原因**:
+1. **设备休眠/关机**: 个人电脑在预定任务时间（17:00, 20:00, 08:30）处于睡眠或关机状态，导致 cron 任务未触发。
+2. **进程僵死**: 任务在执行过程中被强制中断（如断电/重启），导致数据库状态未更新为 `FAILED`，监控脚本误判为仍在运行。
+**解决方案**:
+1. **清理僵死状态**:
+   使用专用脚本将超时的 `RUNNING` 任务标记为 `FAILED`：
+   ```bash
+   python scripts/check/cleanup_stale_tasks.py
+   ```
+2. **手动补录数据**:
+   使用 `--lenient` 模式（宽容模式）手动触发积压日期的同步：
+   ```bash
+   # 后台运行并将日志输出到 manual_sync.log
+   PYTHONUNBUFFERED=1 nohup python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient >> logs/manual_sync.log 2>&1 &
+   
+   # 查看进度
+   tail -f logs/manual_sync.log
+   ```
