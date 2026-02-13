@@ -313,6 +313,13 @@ python scripts/check/check_pipeline_status.py --config config/etl.ini
 python scripts/check/check_db_connections.py --config config/etl.ini
 ```
 
+#### 数据完整性回溯检查 (`inspect_data_completeness.py`)
+检查指定日期向前的 ODS/DWD/DWS/ADS 各层数据是否存在（用于发现漏跑或积压）。
+```bash
+# 检查最近 14 个交易日的数据完整性
+python scripts/check/inspect_data_completeness.py --end-date 20260213 --days 14
+```
+
 ### 3. 历史数据回测补数方案
 针对 2010-2019 年的历史缺失数据，提供了批处理补数方案：
 
@@ -395,8 +402,30 @@ python scripts/sync/run_ads.py --mode incremental --start-date 20100101 --end-da
 #### 4. Batch Execution Script
 To automate this year-by-year execution, use the provided batch script with required arguments:
 ```bash
+# [Insert batch script example if available, or leave for future implementation]
+```
 
-### 4. 常见问题排查 (Troubleshooting)
+### 5. 待办任务：历史数据大回溯 (2013-2019)
+
+针对 2013-2019 年的历史数据空缺，请按顺序执行以下补录任务。建议在非交易时段进行：
+
+1. **补录 ODS Moneyflow (2014-2019)**
+   ```bash
+   python scripts/backfill/backfill_ods_moneyflow.py --start-date 20140101 --end-date 20191231 --config config/etl.ini
+   ```
+
+2. **补录 DWS (2013-2019)**
+   *说明：已在 `scripts/etl/dws/runner.py` 中将事务隔离级别优化为 `READ COMMITTED`，支持大规模并发写入而不会触发锁表错误。*
+   ```bash
+   python scripts/sync/run_dws.py --mode incremental --start-date 20130101 --end-date 20191231 --config config/etl.ini
+   ```
+
+3. **补录 ADS (2013-2019)**
+   ```bash
+   python scripts/backfill/backfill_ads_features.py --start-date 20130101 --end-date 20191231 --config config/etl.ini
+   ```
+
+### 6. 常见问题排查 (Troubleshooting)
 
 #### Q1: 增量同步水位线跑向未来 (2026-12-31)
 **现象**: `check_data_status.py` 显示水位线在未来日期，导致今日数据不更新。

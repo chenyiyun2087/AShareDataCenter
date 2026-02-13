@@ -347,6 +347,11 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
         with conn.cursor() as cursor:
             run_id = log_run_start(cursor, "dws", "incremental")
             conn.commit()
+            
+            # Switch to READ COMMITTED to avoid "Lock wait timeout" and "Lock table size" errors
+            # during large batched INSERT ... SELECT operations
+            cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            conn.commit()
         try:
             with conn.cursor() as cursor:
                 if start_date:
