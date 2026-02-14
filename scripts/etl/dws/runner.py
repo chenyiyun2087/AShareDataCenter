@@ -23,6 +23,7 @@ from .scoring import (
 from .enhanced_factors import (
     run_liquidity_factor,
     run_momentum_extended,
+    run_momentum_extended_batch,
     run_quality_extended,
     run_risk_factor,
 )
@@ -373,6 +374,8 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
                 trade_dates = [d for d in trade_dates if d <= today_int]
 
 
+            use_batch_momentum = bool(start_date and end_date and len(trade_dates) > 1)
+
             for trade_date in trade_dates:
                 logging.info(f"Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
@@ -405,19 +408,34 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
                         # Enhanced factors (Phase 1)
                         logging.info("  [13/16] Running dws_liquidity_factor...")
                         run_liquidity_factor(cursor, trade_date)
-                        logging.info("  [14/16] Running dws_momentum_extended...")
-                        run_momentum_extended(cursor, trade_date)
+                        if use_batch_momentum:
+                            logging.info("  [14/16] Running dws_momentum_extended... (deferred to batch)")
+                        else:
+                            logging.info("  [14/16] Running dws_momentum_extended...")
+                            run_momentum_extended(cursor, trade_date)
                         logging.info("  [15/16] Running dws_quality_extended...")
                         run_quality_extended(cursor, trade_date)
                         logging.info("  [16/16] Running dws_risk_factor...")
                         run_risk_factor(cursor, trade_date)
-                        update_watermark(cursor, "dws", trade_date, "SUCCESS")
+                        if not use_batch_momentum:
+                            update_watermark(cursor, "dws", trade_date, "SUCCESS")
                         conn.commit()
                         logging.info(f"  Completed trade_date={trade_date}")
                     except Exception as exc:
                         update_watermark(cursor, "dws", last_date, "FAILED", str(exc))
                         conn.rollback()
                         raise
+
+            if use_batch_momentum and trade_dates:
+                with conn.cursor() as cursor:
+                    logging.info(
+                        "Running dws_momentum_extended in batch for range %s-%s...",
+                        trade_dates[0],
+                        trade_dates[-1],
+                    )
+                    run_momentum_extended_batch(cursor, trade_dates[0], trade_dates[-1])
+                    update_watermark(cursor, "dws", trade_dates[-1], "SUCCESS")
+                    conn.commit()
 
             with conn.cursor() as cursor:
                 log_run_end(cursor, run_id, "SUCCESS")

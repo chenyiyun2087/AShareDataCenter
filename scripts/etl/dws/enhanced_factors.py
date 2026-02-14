@@ -75,21 +75,24 @@ def run_liquidity_factor(cursor, trade_date: int) -> None:
 
 
 def run_momentum_extended(cursor, trade_date: int) -> None:
-
     """Calculate extended momentum factors."""
+    run_momentum_extended_batch(cursor, trade_date, trade_date)
+
+
+def run_momentum_extended_batch(cursor, start_trade_date: int, end_trade_date: int) -> None:
+    """Calculate extended momentum factors in batch for a date range."""
     sql = """
     INSERT INTO dws_momentum_extended (
         trade_date, ts_code, high_52w_dist, reversal_5, mom_12m_1m, vol_price_corr
     )
     SELECT 
-        base.trade_date,
-        base.ts_code,
+        mom.trade_date,
+        mom.ts_code,
         mom.high_52w_dist,
         mom.reversal_5,
         mom.mom_12m_1m,
         mom.vol_price_corr
-    FROM dwd_daily base
-    LEFT JOIN (
+    FROM (
         SELECT 
             d.trade_date,
             d.ts_code,
@@ -108,12 +111,12 @@ def run_momentum_extended(cursor, trade_date: int) -> None:
             NULL AS vol_price_corr
         FROM dwd_daily d
         LEFT JOIN dws_price_adj_daily adj ON adj.trade_date = d.trade_date AND adj.ts_code = d.ts_code
-        WHERE d.trade_date >= %s
+        WHERE d.trade_date BETWEEN %s AND %s
         WINDOW 
             w AS (PARTITION BY d.ts_code ORDER BY d.trade_date),
             w250 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 249 PRECEDING AND CURRENT ROW)
-    ) mom ON mom.trade_date = base.trade_date AND mom.ts_code = base.ts_code
-    WHERE base.trade_date = %s
+    ) mom
+    WHERE mom.trade_date BETWEEN %s AND %s
 
     ON DUPLICATE KEY UPDATE
         high_52w_dist = VALUES(high_52w_dist),
@@ -121,8 +124,8 @@ def run_momentum_extended(cursor, trade_date: int) -> None:
         mom_12m_1m = VALUES(mom_12m_1m),
         vol_price_corr = VALUES(vol_price_corr)
     """
-    start_date = _get_lookback_date(cursor, trade_date, 300)
-    cursor.execute(sql, (start_date, trade_date))
+    lookback_start_date = _get_lookback_date(cursor, start_trade_date, 300)
+    cursor.execute(sql, (lookback_start_date, end_trade_date, start_trade_date, end_trade_date))
 
 
 def run_quality_extended(cursor, trade_date: int) -> None:
@@ -209,4 +212,3 @@ def run_risk_factor(cursor, trade_date: int) -> None:
     """
     start_date = _get_lookback_date(cursor, trade_date, 100)
     cursor.execute(sql, (start_date, trade_date))
-
