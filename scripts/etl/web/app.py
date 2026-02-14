@@ -57,7 +57,12 @@ def _run_layer(layer: str, mode: str, params: dict) -> None:
         if mode == "full":
             ods.run_full(token, params["start_date"], params["rate_limit"])
         else:
-            ods.run_incremental(token, params["rate_limit"])
+            ods.run_incremental(
+                token, 
+                params.get("start_date"), 
+                params.get("end_date"), 
+                params["rate_limit"]
+            )
         if params.get("fina_start") and params.get("fina_end"):
             ods.run_fina_incremental(
                 token,
@@ -70,7 +75,7 @@ def _run_layer(layer: str, mode: str, params: dict) -> None:
         if mode == "full":
             dwd.run_full(params["start_date"])
         else:
-            dwd.run_incremental()
+            dwd.run_incremental(params.get("start_date"), params.get("end_date"))
         if params.get("fina_start") and params.get("fina_end"):
             dwd.run_fina_incremental(params["fina_start"], params["fina_end"])
         return
@@ -78,13 +83,13 @@ def _run_layer(layer: str, mode: str, params: dict) -> None:
         if mode == "full":
             dws.run_full(params["start_date"])
         else:
-            dws.run_incremental()
+            dws.run_incremental(params.get("start_date"), params.get("end_date"))
         return
     if layer == "ads":
         if mode == "full":
             ads.run_full(params["start_date"])
         else:
-            ads.run_incremental()
+            ads.run_incremental(params.get("start_date"), params.get("end_date"))
         return
     raise ValueError(f"Unknown layer: {layer}")
 
@@ -173,11 +178,28 @@ def _get_payload() -> dict:
 
 def _serialize_job(job) -> dict:
     next_run = job.next_run_time.isoformat() if job.next_run_time else None
+    # Parse ID to get readable name
+    name = job.id
+    try:
+        parts = job.id.split("-")
+        if len(parts) >= 2:
+            name = f"{parts[0].upper()} {parts[1].capitalize()}"
+    except:
+        pass
+
     return {
         "id": job.id,
+        "name": name,
         "next_run_time": next_run,
         "trigger": str(job.trigger),
+        "args": job.args if hasattr(job, "args") else [],
     }
+
+
+@app.route("/api/jobs", methods=["GET"])
+def api_list_jobs():
+    jobs = scheduler.get_jobs()
+    return jsonify({"data": [_serialize_job(job) for job in jobs]})
 
 
 ODS_TABLES: List[str] = [
@@ -225,6 +247,14 @@ def _fetch_ods_rows(
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
     return columns, rows, total
+
+
+@app.route("/api/readme", methods=["GET"])
+def api_readme():
+    try:
+        return send_from_directory(ROOT_DIR, "README.md")
+    except Exception as exc:
+        return _json_error(str(exc))
 
 
 @app.route("/", defaults={"path": ""})
@@ -280,9 +310,21 @@ def api_run_task():
     try:
         layer = payload["layer"]
         mode = payload["mode"]
+        
+        # 处理默认触发逻辑
+        start_date = payload.get("start_date")
+        end_date = payload.get("end_date")
+        
+        # 如果是 default_trigger，且没有显式指定日期，可以在这里计算默认日期
+        if payload.get("default_trigger"):
+             # 此处保留为空，让 runner 决定（通常是增量）
+             # 或者如果用户意图是"跑今天"，可以显式设置
+             pass
+
         params = {
             "token": payload.get("token"),
-            "start_date": int(payload.get("start_date", 20100101)),
+            "start_date": int(start_date) if start_date else None,
+            "end_date": int(end_date) if end_date else None,
             "fina_start": payload.get("fina_start"),
             "fina_end": payload.get("fina_end"),
             "rate_limit": int(payload.get("rate_limit", 500)),
@@ -291,6 +333,11 @@ def api_run_task():
             params["fina_start"] = int(params["fina_start"])
         if params["fina_end"]:
             params["fina_end"] = int(params["fina_end"])
+            
+        # 补充默认 start_date for full run if missing
+        if mode == "full" and not params["start_date"]:
+             params["start_date"] = 20180101
+
         _run_async(layer, mode, params)
         return jsonify({"message": "Task triggered."})
     except Exception as exc:
@@ -413,35 +460,48 @@ def api_data_status():
                     ("ods_margin_detail", "ODS融资融券"),
                     ("ods_cyq_perf", "ODS筹码指标"),
                 ]
-                ods_status = []
+                status["ods"] = []
                 for table, name in ods_tables:
-                    cursor.execute(f"""
-                        SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*)
-                        FROM {table}
-                    """)
-                    row = cursor.fetchone()
-                    ods_status.append({
-                        "table": table,
-                        "name": name,
-                        "latest_date": row[0],
-                        "date_count": row[1],
-                        "row_count": row[2],
-                        "ready": row[0] is not None
-                    })
-                status["ods"] = ods_status
-                
+                    try:
+                        cursor.execute(f"SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*) FROM {table}")
+                        row = cursor.fetchone()
+                        status["ods"].append({
+                            "table": table,
+                            "name": name,
+                            "latest_date": row[0],
+                            "date_count": row[1],
+                            "row_count": row[2],
+                            "ready": row[0] is not None
+                        })
+                    except Exception:
+                         status["ods"].append({
+                            "table": table,
+                            "name": name,
+                            "latest_date": None,
+                            "date_count": 0,
+                            "row_count": 0,
+                            "ready": False
+                        })
+
                 # DWD层状态
-                cursor.execute("""
-                    SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*)
-                    FROM dwd_daily_basic
-                """)
-                row = cursor.fetchone()
-                status["dwd"] = {
-                    "latest_date": row[0],
-                    "date_count": row[1],
-                    "row_count": row[2],
-                    "ready": row[0] is not None
-                }
+                dwd_tables = [
+                    ("dwd_daily_basic", "DWD日线基础"),
+                ]
+                status["dwd"] = []
+                for table, name in dwd_tables:
+                    try:
+                        cursor.execute(f"SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*) FROM {table}")
+                        row = cursor.fetchone()
+                        status["dwd"].append({
+                            "table": table,
+                            "name": name,
+                            "latest_date": row[0],
+                            "date_count": row[1],
+                            "row_count": row[2],
+                            "ready": row[0] is not None
+                        })
+                    except Exception:
+                        pass
                 
                 # DWS层状态 (评分表)
                 dws_tables = [
@@ -452,26 +512,46 @@ def api_data_status():
                     ("dws_capital_score", "资金评分"),
                     ("dws_chip_score", "筹码评分"),
                 ]
-                dws_status = []
+                status["dws"] = []
                 for table, name in dws_tables:
-                    cursor.execute(f"""
-                        SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*)
-                        FROM {table}
-                    """)
-                    row = cursor.fetchone()
-                    dws_status.append({
-                        "table": table,
-                        "name": name,
-                        "latest_date": row[0],
-                        "date_count": row[1],
-                        "row_count": row[2],
-                        "ready": row[0] is not None
-                    })
-                status["dws"] = dws_status
+                    try:
+                        cursor.execute(f"SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*) FROM {table}")
+                        row = cursor.fetchone()
+                        status["dws"].append({
+                            "table": table,
+                            "name": name,
+                            "latest_date": row[0],
+                            "date_count": row[1],
+                            "row_count": row[2],
+                            "ready": row[0] is not None
+                        })
+                    except Exception:
+                        pass
                 
+                # ADS层状态
+                ads_tables = [
+                    ("ads_features_stock_daily", "ADS特征日表"),
+                ]
+                status["ads"] = []
+                for table, name in ads_tables:
+                    try:
+                        cursor.execute(f"SELECT MAX(trade_date), COUNT(DISTINCT trade_date), COUNT(*) FROM {table}")
+                        row = cursor.fetchone()
+                        status["ads"].append({
+                            "table": table,
+                            "name": name,
+                            "latest_date": row[0],
+                            "date_count": row[1],
+                            "row_count": row[2],
+                            "ready": row[0] is not None
+                        })
+                    except Exception:
+                        pass
+
                 # 获取最新交易日
                 cursor.execute("SELECT MAX(trade_date) FROM ods_daily")
-                status["latest_trade_date"] = cursor.fetchone()[0]
+                row = cursor.fetchone()
+                status["latest_trade_date"] = row[0] if row else None
         
         return jsonify({"data": status})
     except Exception as exc:
@@ -762,3 +842,11 @@ def api_scores_compare():
     except Exception as exc:
         return _json_error(str(exc))
 
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve(path):
+    if path != "" and (DIST_DIR / path).exists():
+        return send_from_directory(DIST_DIR, path)
+    else:
+        return send_from_directory(DIST_DIR, "index.html")

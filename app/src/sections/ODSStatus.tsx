@@ -1,6 +1,7 @@
-import { motion } from 'framer-motion';
-import { Server } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Server, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -10,131 +11,118 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
+interface DataStatusItem {
+  table: string;
+  name: string;
+  latest_date: string;
+  date_count: number;
+  row_count: number;
+  ready: boolean;
+}
+
+interface DataStatusResponse {
+  ods: DataStatusItem[];
+  dwd: DataStatusItem[];
+  dws: DataStatusItem[];
+  ads: DataStatusItem[];
+  latest_trade_date: string;
+}
+
 export function ODSStatus() {
-  const permissionGroups = [
-    {
-      title: '基础数据（120 积分起）',
-      rows: [
-        ['股票列表', 'stock_basic', '120', '每日更新', 'A 股代码、名称、行业等基础信息'],
-        ['交易日历', 'trade_cal', '120', '定期更新', '交易所交易日历'],
-        ['上市公司信息', 'stock_company', '120', '定期更新', '公司基本资料、主营业务等'],
-        ['IPO 新股列表', 'new_share', '120', '每日 19 点', '新股上市时间、发行价等'],
-        ['股票曾用名', 'namechange', '120', '定期更新', '历史曾用名信息'],
-        ['ST 股票列表', 'stk_stateowned', '120', '不定期', 'ST、*ST 等特殊处理股票'],
-      ],
-    },
-    {
-      title: '行情数据（2000 积分起）',
-      rows: [
-        ['日线行情', 'daily', '2000', '交易日 15-17 点', '开高低收、成交量等'],
-        ['周线行情', 'weekly', '2000', '每周五 15-17 点', '周 K 线数据'],
-        ['月线行情', 'monthly', '2000', '每月更新', '月 K 线数据'],
-        ['复权行情', 'pro_bar', '2000', '每月更新', '前/后复权行情'],
-        ['每日指标', 'daily_basic', '2000', '交易日 15-17 点', 'PE、PB、PS 等'],
-        ['复权因子', 'adj_factor', '2000', '交易日更新', '复权因子'],
-        ['涨跌停价格', 'stk_limit', '2000', '交易日 9 点', '每日涨跌停价格'],
-        ['停复牌信息', 'suspend_d', '2000', '交易日更新', '停复牌时间及原因'],
-      ],
-    },
-    {
-      title: '财务数据（2000 积分起）',
-      rows: [
-        ['利润表', 'income', '2000', '实时更新', '营业收入、净利润等'],
-        ['资产负债表', 'balancesheet', '2000', '实时更新', '总资产、负债等'],
-        ['现金流量表', 'cashflow', '2000', '实时更新', '经营/投资/筹资现金流'],
-        ['财务指标', 'fina_indicator', '2000', '随财报更新', 'ROE、ROA 等'],
-        ['业绩预告', 'forecast', '2000', '实时更新', '业绩预告数据'],
-        ['业绩快报', 'express', '2000', '实时更新', '快报数据'],
-        ['分红送股', 'dividend', '2000', '实时更新', '分红派息、送转股'],
-        ['主营构成', 'fina_mainbz', '2000', '随财报更新', '主营业务构成明细'],
-      ],
-    },
-    {
-      title: '参考数据（2000 积分起）',
-      rows: [
-        ['前十大股东', 'top10_holders', '2000', '定期更新', '前十大股东持股情况'],
-        ['前十大流通股东', 'top10_floatholders', '2000', '定期更新', '流通股东持股'],
-        ['股东人数', 'stk_holdernumber', '2000', '不定期', '股东户数变化'],
-        ['股权质押统计', 'pledge_stat', '2000', '每日晚 9 点', '股权质押统计'],
-        ['股权质押明细', 'pledge_detail', '2000', '每日晚 9 点', '质押明细记录'],
-        ['股东增减持', 'stk_holdertrade', '2000', '交易日 19 点', '重要股东变动'],
-        ['大宗交易', 'block_trade', '2000', '每日晚 9 点', '大宗交易明细'],
-        ['限售股解禁', 'share_float', '3000', '定期更新', '限售股解禁时间表'],
-      ],
-    },
-    {
-      title: '特色数据（2000-5000 积分）',
-      rows: [
-        ['沪深股通持股', 'hk_hold', '2000', '下个交易日 8 点', '北向资金持股明细'],
-        ['龙虎榜统计', 'top_list', '2000', '每日晚 8 点', '龙虎榜每日明细'],
-        ['龙虎榜机构', 'top_inst', '2000', '每日晚 8 点', '机构买卖席位数据'],
-        ['券商盈利预测', 'forecast_vip', '5000', '定期更新', '券商一致预期'],
-        ['每日筹码', 'cyq_perf', '5000', '交易日更新', '筹码分布及胜率'],
-        ['技术面因子', 'stk_factor', '5000', '交易日更新', 'MACD、KDJ 等指标'],
-      ],
-    },
-    {
-      title: '两融及资金流向（2000-5000 积分）',
-      rows: [
-        ['融资融券汇总', 'margin', '2000', '每日 9 点', '融资融券交易汇总'],
-        ['融资融券明细', 'margin_detail', '2000', '每日 9 点', '个股融资融券明细'],
-        ['个股资金流向', 'moneyflow', '2000', '交易日 19 点', '主力/大单资金流向'],
-        ['个股资金流向(THS)', 'moneyflow_hsgt', '5000', '交易日更新', '同花顺资金流向'],
-        ['沪深港通资金', 'moneyflow_hsgt', '2000', '交易日更新', '北向南向资金流向'],
-      ],
-    },
-  ];
+  const [data, setData] = useState<DataStatusResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/data/status');
+      const json = await res.json();
+      if (json.data) {
+        setData(json.data);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const renderTable = (items: DataStatusItem[] = []) => (
+    <div className="rounded-xl border border-border/50 overflow-hidden mt-4">
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-secondary/50">
+            <TableHead>数据表</TableHead>
+            <TableHead>最新日期</TableHead>
+            <TableHead>交易日天数</TableHead>
+            <TableHead>总行数</TableHead>
+            <TableHead>状态</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {items.map((row) => (
+            <TableRow key={row.table} className="hover:bg-secondary/30">
+              <TableCell className="font-medium">{row.name}</TableCell>
+              <TableCell>{row.latest_date || '-'}</TableCell>
+              <TableCell>{row.date_count}</TableCell>
+              <TableCell>{row.row_count.toLocaleString()}</TableCell>
+              <TableCell>
+                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${row.ready ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'
+                  }`}>
+                  {row.ready ? '就绪' : '未就绪'}
+                </span>
+              </TableCell>
+            </TableRow>
+          ))}
+          {items.length === 0 && !loading && (
+            <TableRow>
+              <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                暂无数据
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay: 0.3 }}
-      className="px-6 py-4"
-    >
-      <Card className="border-border/50 bg-card/50 backdrop-blur">
-        <CardHeader className="pb-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-sky-500/10">
-                <Server className="w-5 h-5 text-sky-400" />
-              </div>
-              <CardTitle className="text-lg font-semibold">Tushare 5000 积分数据权限概览</CardTitle>
+    <Card className="border-border/50 bg-card/50 backdrop-blur">
+      <CardHeader className="pb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-sky-500/10">
+              <Server className="w-5 h-5 text-sky-400" />
             </div>
+            <CardTitle className="text-lg font-semibold">数据状态概览</CardTitle>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {permissionGroups.map((group) => (
-            <div key={group.title} className="space-y-3">
-              <h3 className="text-sm font-semibold text-sky-300">{group.title}</h3>
-              <div className="rounded-xl border border-border/50 overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-secondary/50 hover:bg-secondary/50">
-                      <TableHead className="text-muted-foreground">数据类型</TableHead>
-                      <TableHead className="text-muted-foreground">接口名称</TableHead>
-                      <TableHead className="text-muted-foreground">积分要求</TableHead>
-                      <TableHead className="text-muted-foreground">更新频率</TableHead>
-                      <TableHead className="text-muted-foreground">数据说明</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {group.rows.map((row) => (
-                      <TableRow key={`${group.title}-${row[1]}`} className="hover:bg-secondary/30">
-                        {row.map((cell) => (
-                          <TableCell key={`${group.title}-${row[1]}-${cell}`} className="text-sm">
-                            {cell}
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    </motion.section>
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="p-2 rounded-full hover:bg-secondary/80 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue="ods" className="w-full">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="ods">ODS 层</TabsTrigger>
+            <TabsTrigger value="dwd">DWD 层</TabsTrigger>
+            <TabsTrigger value="dws">DWS 层</TabsTrigger>
+            <TabsTrigger value="ads">ADS 层</TabsTrigger>
+          </TabsList>
+          <TabsContent value="ods">{renderTable(data?.ods)}</TabsContent>
+          <TabsContent value="dwd">{renderTable(data?.dwd)}</TabsContent>
+          <TabsContent value="dws">{renderTable(data?.dws)}</TabsContent>
+          <TabsContent value="ads">{renderTable(data?.ads)}</TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
   );
 }

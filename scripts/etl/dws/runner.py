@@ -30,15 +30,21 @@ from .enhanced_factors import (
 )
 
 
-def _run_price_adj(cursor, trade_date: int | None = None) -> None:
+def _run_price_adj(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     filter_sql = ""
     update_filter = ""
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        lookback_sql = "WHERE trade_date >= (SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 70)"
+        filter_sql = "WHERE d.trade_date BETWEEN %s AND %s"
+        update_filter = "WHERE cur.trade_date BETWEEN %s AND %s"
+        insert_params = [trade_date, end_date]
+        update_params = [trade_date, trade_date, end_date]
+    elif trade_date is not None:
         # For single day, we only need a bit of lookback
         lookback_sql = "WHERE trade_date >= (SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 70)"
         filter_sql = "WHERE d.trade_date = %s"
         update_filter = "WHERE cur.trade_date = %s"
-        insert_params = [trade_date, trade_date] # For lookback_sql (not used in insert) and target
+        insert_params = [trade_date]
         update_params = [trade_date, trade_date]
     else:
         lookback_sql = ""
@@ -63,7 +69,7 @@ def _run_price_adj(cursor, trade_date: int | None = None) -> None:
     {filter_sql}
     ON DUPLICATE KEY UPDATE qfq_close = VALUES(qfq_close);
     """
-    cursor.execute(insert_sql, [trade_date] if trade_date else [])
+    cursor.execute(insert_sql, insert_params)
 
     update_sql = f"""
     UPDATE dws_price_adj_daily cur
@@ -89,10 +95,13 @@ def _run_price_adj(cursor, trade_date: int | None = None) -> None:
     cursor.execute(update_sql, update_params)
 
 
-def _run_fina_pit(cursor, trade_date: int | None = None) -> None:
+def _run_fina_pit(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "AND cal.cal_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "AND cal.cal_date = %s"
         params.append(trade_date)
     sql = f"""
@@ -140,9 +149,13 @@ def _run_fina_pit(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def _run_tech_pattern(cursor, trade_date: int | None = None) -> None:
+def _run_tech_pattern(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """Calculate technical pattern indicators: HMA, RSI, Bollinger Bands."""
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 30)"
+        params = [trade_date, trade_date, end_date]
+        filter_clause = "WHERE base.trade_date BETWEEN %s AND %s"
+    elif trade_date is not None:
         lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 30)"
         params = [trade_date, trade_date]
         filter_clause = "WHERE base.trade_date = %s"
@@ -183,9 +196,13 @@ def _run_tech_pattern(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params)
 
 
-def _run_capital_flow(cursor, trade_date: int | None = None) -> None:
+def _run_capital_flow(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """Calculate capital flow indicators from moneyflow data."""
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 10)"
+        params = [trade_date, trade_date, end_date]
+        filter_clause = "WHERE base.trade_date BETWEEN %s AND %s"
+    elif trade_date is not None:
         lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 10)"
         params = [trade_date, trade_date]
         filter_clause = "WHERE base.trade_date = %s"
@@ -222,9 +239,13 @@ def _run_capital_flow(cursor, trade_date: int | None = None) -> None:
     """
     cursor.execute(sql, params)
 
-def _run_leverage_sentiment(cursor, trade_date: int | None = None) -> None:
+def _run_leverage_sentiment(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """Calculate leverage and sentiment indicators."""
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 30)"
+        params = [trade_date, trade_date, end_date]
+        filter_clause = "WHERE base.trade_date BETWEEN %s AND %s"
+    elif trade_date is not None:
         lookback_date = "(SELECT cal_date FROM dim_trade_cal WHERE exchange='SSE' AND is_open=1 AND cal_date <= %s ORDER BY cal_date DESC LIMIT 1 OFFSET 30)"
         params = [trade_date, trade_date]
         filter_clause = "WHERE base.trade_date = %s"
@@ -260,11 +281,14 @@ def _run_leverage_sentiment(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params)
 
 
-def _run_chip_dynamics(cursor, trade_date: int | None = None) -> None:
+def _run_chip_dynamics(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """Calculate chip distribution dynamics."""
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE cs.trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE cs.trade_date = %s"
         params.append(trade_date)
     
@@ -353,6 +377,9 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
             # Switch to READ COMMITTED to avoid "Lock wait timeout" and "Lock table size" errors
             # during large batched INSERT ... SELECT operations
             cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            cursor.execute("SET SESSION innodb_lock_wait_timeout = 300")
+            cursor.execute("SET SESSION net_read_timeout = 300")
+            cursor.execute("SET SESSION net_write_timeout = 300")
             conn.commit()
         try:
             with conn.cursor() as cursor:
