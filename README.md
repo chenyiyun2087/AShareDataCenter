@@ -56,18 +56,16 @@
 
    # 全链路状态（ODS/Financial/Features/DWD/DWS/ADS）
    python scripts/check/check_data_status.py --config config/etl.ini
+
+   # 历史数据完整性回溯（检查过去 N 天的各层数据行数）
+   python scripts/check/inspect_data_completeness.py --end-date 20260213 --days 30 --config config/etl.ini
    ```
 8. Web 控制台：
    ```bash
-   # 先构建前端（在 app/ 目录）
-   cd app
-   npm install
-   npm run build
-   cd ..
-
-   # 再启动 Flask 服务（会托管 app/dist）
-   python scripts/run_web.py --host 0.0.0.0 --port 5000
+   # 启动 Flask 服务（已集成前端静态资源）
+   python scripts/run_web.py --port 5999
    ```
+   启动后访问：http://localhost:5999
 
 ## 跑批稳定性加固与扩容
 
@@ -77,6 +75,20 @@
 - 重试与幂等保护：`python scripts/schedule/stability_guard.py --task-name ... --idempotency-key ... -- --command`
 - 看板与报警：`python scripts/check/batch_slo_dashboard.py --hours 24`
 - 方案说明：`docs/batch_stability_hardening.md`
+
+- 方案说明：`docs/batch_stability_hardening.md`
+
+## Web 界面功能
+
+启动控制台后，可使用以下功能：
+- **平台首页**：查看项目文档 (`README.md`)。
+- **作业管理 -> 数据跑批**：
+    - **数据状态**：分层查看 (ODS/DWD/DWS/ADS) 数据就绪情况。
+    - **手动触发**：支持按日期范围触发指定层级的 ETL 任务。
+- **作业管理 -> 定时任务**：
+    - 管理系统的 Cron 调度任务，支持手动立即执行或删除任务。
+- **作业管理 -> 检查脚本**：
+    - **数据完整性检查**：按日期范围检查各层核心表的行数与完整性。
 
 ## 前端开发联调（可选）
 

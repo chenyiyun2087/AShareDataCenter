@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 
 
-def _run_momentum_score(cursor, trade_date: int | None = None) -> None:
+def _run_momentum_score(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """计算动量评分（0-25分）.
     
     - ret_5_score: 5日收益评分 (0-3)
@@ -20,9 +20,12 @@ def _run_momentum_score(cursor, trade_date: int | None = None) -> None:
     """
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE p.trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE p.trade_date = %s"
-        params.append(trade_date)
+        params = [trade_date]
     
     sql = f"""
     INSERT INTO dws_momentum_score (
@@ -111,7 +114,7 @@ def _run_momentum_score(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def _run_value_score(cursor, trade_date: int | None = None) -> None:
+def _run_value_score(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """计算价值评分（0-20分）.
     
     - pe_score: PE评分 (0-7)
@@ -120,9 +123,12 @@ def _run_value_score(cursor, trade_date: int | None = None) -> None:
     """
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE trade_date = %s"
-        params.append(trade_date)
+        params = [trade_date]
     
     sql = f"""
     INSERT INTO dws_value_score (
@@ -174,7 +180,7 @@ def _run_value_score(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def _run_quality_score(cursor, trade_date: int | None = None) -> None:
+def _run_quality_score(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """计算质量评分（0-20分）.
     
     - roe_score: ROE评分 (0-8)
@@ -183,9 +189,12 @@ def _run_quality_score(cursor, trade_date: int | None = None) -> None:
     """
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE trade_date = %s"
-        params.append(trade_date)
+        params = [trade_date]
     
     sql = f"""
     INSERT INTO dws_quality_score (
@@ -236,7 +245,7 @@ def _run_quality_score(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def _run_technical_score(cursor, trade_date: int | None = None) -> None:
+def _run_technical_score(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """计算技术评分（0-15分）.
     
     使用前复权版本技术指标 (_qfq 后缀):
@@ -248,9 +257,12 @@ def _run_technical_score(cursor, trade_date: int | None = None) -> None:
     """
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE trade_date = %s"
-        params.append(trade_date)
+        params = [trade_date]
     
     sql = f"""
     INSERT INTO dws_technical_score (
@@ -320,7 +332,7 @@ def _run_technical_score(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def _run_capital_score(cursor, trade_date: int | None = None) -> None:
+def _run_capital_score(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """计算资金评分（0-10分）.
     
     - elg_score: 特大单评分 (0-5)
@@ -330,9 +342,12 @@ def _run_capital_score(cursor, trade_date: int | None = None) -> None:
     """
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE mf.trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE mf.trade_date = %s"
-        params.append(trade_date)
+        params = [trade_date]
     
     sql = f"""
     INSERT INTO dws_capital_score (
@@ -386,7 +401,7 @@ def _run_capital_score(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def _run_chip_score(cursor, trade_date: int | None = None) -> None:
+def _run_chip_score(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """计算筹码评分（0-10分）.
     
     - winner_score: 获利比例评分 (0-6)
@@ -394,9 +409,12 @@ def _run_chip_score(cursor, trade_date: int | None = None) -> None:
     """
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE c.trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE c.trade_date = %s"
-        params.append(trade_date)
+        params = [trade_date]
     
     sql = f"""
     INSERT INTO dws_chip_score (

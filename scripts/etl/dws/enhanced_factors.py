@@ -19,8 +19,8 @@ def _get_lookback_date(cursor, target_date: int, days: int) -> int:
     return int(row[0]) if row else 20100101
 
 
-def run_liquidity_factor(cursor, trade_date: int) -> None:
-    """Calculate liquidity factors using window functions."""
+def run_liquidity_factor(cursor, trade_date: int, end_date: int | None = None) -> None:
+    """Calculate liquidity factors using window functions (supports batch date range)."""
     sql = """
     INSERT INTO dws_liquidity_factor (
         trade_date, ts_code, turnover_vol_20, amihud_20, vol_concentration, bid_ask_spread
@@ -62,7 +62,7 @@ def run_liquidity_factor(cursor, trade_date: int) -> None:
             w5 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW),
             w20 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)
     ) liq ON liq.trade_date = base.trade_date AND liq.ts_code = base.ts_code
-    WHERE base.trade_date = %s
+    WHERE base.trade_date BETWEEN %s AND %s
 
     ON DUPLICATE KEY UPDATE
         turnover_vol_20 = VALUES(turnover_vol_20),
@@ -70,8 +70,8 @@ def run_liquidity_factor(cursor, trade_date: int) -> None:
         vol_concentration = VALUES(vol_concentration),
         bid_ask_spread = VALUES(bid_ask_spread)
     """
-    start_date = _get_lookback_date(cursor, trade_date, 60)
-    cursor.execute(sql, (start_date, trade_date))
+    start_lookback = _get_lookback_date(cursor, trade_date, 60)
+    cursor.execute(sql, (start_lookback, trade_date, end_date if end_date else trade_date))
 
 
 def run_momentum_extended(cursor, trade_date: int) -> None:
@@ -128,9 +128,8 @@ def run_momentum_extended_batch(cursor, start_trade_date: int, end_trade_date: i
     cursor.execute(sql, (lookback_start_date, end_trade_date, start_trade_date, end_trade_date))
 
 
-def run_quality_extended(cursor, trade_date: int) -> None:
-
-    """Calculate extended quality factors (DuPont decomposition)."""
+def run_quality_extended(cursor, trade_date: int, end_date: int | None = None) -> None:
+    """Calculate extended quality factors (DuPont decomposition) (supports batch date range)."""
     sql = """
     INSERT INTO dws_quality_extended (
         trade_date, ts_code, dupont_margin, dupont_turnover, dupont_leverage, roe_trend
@@ -158,7 +157,7 @@ def run_quality_extended(cursor, trade_date: int) -> None:
         LEFT JOIN dwd_fina_indicator fi ON fi.ts_code = f.ts_code AND fi.end_date = f.end_date
         WHERE f.trade_date >= %s
     ) base
-    WHERE base.trade_date = %s
+    WHERE base.trade_date BETWEEN %s AND %s
 
     ON DUPLICATE KEY UPDATE
         dupont_margin = VALUES(dupont_margin),
@@ -166,13 +165,12 @@ def run_quality_extended(cursor, trade_date: int) -> None:
         dupont_leverage = VALUES(dupont_leverage),
         roe_trend = VALUES(roe_trend)
     """
-    start_date = _get_lookback_date(cursor, trade_date, 400) # Need enough history for LAG(4)
-    cursor.execute(sql, (start_date, trade_date))
+    start_lookback = _get_lookback_date(cursor, trade_date, 400) # Need enough history for LAG(4)
+    cursor.execute(sql, (start_lookback, trade_date, end_date if end_date else trade_date))
 
 
-def run_risk_factor(cursor, trade_date: int) -> None:
-
-    """Calculate risk factors (downside vol, max drawdown, VaR)."""
+def run_risk_factor(cursor, trade_date: int, end_date: int | None = None) -> None:
+    """Calculate risk factors (downside vol, max drawdown, VaR) (supports batch date range)."""
     sql = """
     INSERT INTO dws_risk_factor (
         trade_date, ts_code, downside_vol_60, max_drawdown_60, var_5pct_60, beta_60, ivol_20
@@ -201,7 +199,7 @@ def run_risk_factor(cursor, trade_date: int) -> None:
         WHERE d.trade_date >= %s
         WINDOW w60 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)
     ) risk ON risk.trade_date = base.trade_date AND risk.ts_code = base.ts_code
-    WHERE base.trade_date = %s
+    WHERE base.trade_date BETWEEN %s AND %s
 
     ON DUPLICATE KEY UPDATE
         downside_vol_60 = VALUES(downside_vol_60),
@@ -210,5 +208,5 @@ def run_risk_factor(cursor, trade_date: int) -> None:
         beta_60 = VALUES(beta_60),
         ivol_20 = VALUES(ivol_20)
     """
-    start_date = _get_lookback_date(cursor, trade_date, 100)
-    cursor.execute(sql, (start_date, trade_date))
+    start_lookback = _get_lookback_date(cursor, trade_date, 100)
+    cursor.execute(sql, (start_lookback, trade_date, end_date if end_date else trade_date))
