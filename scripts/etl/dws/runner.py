@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from ..base.runtime import (
     ensure_watermark,
     get_env_config,
@@ -401,97 +402,71 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
                 trade_dates = [d for d in trade_dates if d <= today_int]
 
 
-            # Determine batch mode
-            is_batch_mode = bool(start_date and end_date and len(trade_dates) > 1)
+            use_batch_momentum = bool(start_date and end_date and len(trade_dates) > 1)
+            disable_watermark = os.environ.get("DWS_DISABLE_WATERMARK", "0") == "1"
 
-            if is_batch_mode:
-                start_d = trade_dates[0]
-                end_d = trade_dates[-1]
-                logging.info(f"RUNNING IN BATCH MODE: {start_d} to {end_d}")
+            for trade_date in trade_dates:
+                logging.info(f"Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
-                    logging.info("  [1/16] Batch running dws_price_adj_daily...")
-                    _run_price_adj(cursor, start_d, end_d)
-                    logging.info("  [2/16] Batch running dws_fina_pit_daily...")
-                    _run_fina_pit(cursor, start_d, end_d)
-                    logging.info("  [3/16] Batch running dws_tech_pattern...")
-                    _run_tech_pattern(cursor, start_d, end_d)
-                    logging.info("  [4/16] Batch running dws_capital_flow...")
-                    _run_capital_flow(cursor, start_d, end_d)
-                    logging.info("  [5/16] Batch running dws_leverage_sentiment...")
-                    _run_leverage_sentiment(cursor, start_d, end_d)
-                    logging.info("  [6/16] Batch running dws_chip_dynamics...")
-                    _run_chip_dynamics(cursor, start_d, end_d)
-                    
-                    logging.info("  [7/16] Batch running dws_momentum_score...")
-                    _run_momentum_score(cursor, start_d, end_d)
-                    logging.info("  [8/16] Batch running dws_value_score...")
-                    _run_value_score(cursor, start_d, end_d)
-                    logging.info("  [9/16] Batch running dws_quality_score...")
-                    _run_quality_score(cursor, start_d, end_d)
-                    logging.info("  [10/16] Batch running dws_technical_score...")
-                    _run_technical_score(cursor, start_d, end_d)
-                    logging.info("  [11/16] Batch running dws_capital_score...")
-                    _run_capital_score(cursor, start_d, end_d)
-                    logging.info("  [12/16] Batch running dws_chip_score...")
-                    _run_chip_score(cursor, start_d, end_d)
-
-                    logging.info("  [13/16] Batch running dws_liquidity_factor...")
-                    run_liquidity_factor(cursor, start_d, end_d)
-                    logging.info("  [14/16] Batch running dws_momentum_extended...")
-                    run_momentum_extended_batch(cursor, start_d, end_d)
-                    logging.info("  [15/16] Batch running dws_quality_extended...")
-                    run_quality_extended(cursor, start_d, end_d)
-                    logging.info("  [16/16] Batch running dws_risk_factor...")
-                    run_risk_factor(cursor, start_d, end_d)
-                    
-                    update_watermark(cursor, "dws", end_d, "SUCCESS")
-                    conn.commit()
-            else:
-                for trade_date in trade_dates:
-                    logging.info(f"Processing trade_date={trade_date}")
-                    with conn.cursor() as cursor:
-                        try:
-                            logging.info("  [1/12] Running dws_price_adj_daily...")
-                            _run_price_adj(cursor, trade_date)
-                            logging.info("  [2/12] Running dws_fina_pit_daily...")
-                            _run_fina_pit(cursor, trade_date)
-                            logging.info("  [3/12] Running dws_tech_pattern...")
-                            _run_tech_pattern(cursor, trade_date)
-                            logging.info("  [4/12] Running dws_capital_flow...")
-                            _run_capital_flow(cursor, trade_date)
-                            logging.info("  [5/12] Running dws_leverage_sentiment...")
-                            _run_leverage_sentiment(cursor, trade_date)
-                            logging.info("  [6/12] Running dws_chip_dynamics...")
-                            _run_chip_dynamics(cursor, trade_date)
-                            # Scoring tables
-                            logging.info("  [7/12] Running dws_momentum_score...")
-                            _run_momentum_score(cursor, trade_date)
-                            logging.info("  [8/12] Running dws_value_score...")
-                            _run_value_score(cursor, trade_date)
-                            logging.info("  [9/12] Running dws_quality_score...")
-                            _run_quality_score(cursor, trade_date)
-                            logging.info("  [10/12] Running dws_technical_score...")
-                            _run_technical_score(cursor, trade_date)
-                            logging.info("  [11/12] Running dws_capital_score...")
-                            _run_capital_score(cursor, trade_date)
-                            logging.info("  [12/16] Running dws_chip_score...")
-                            _run_chip_score(cursor, trade_date)
-                            # Enhanced factors (Phase 1)
-                            logging.info("  [13/16] Running dws_liquidity_factor...")
-                            run_liquidity_factor(cursor, trade_date)
+                    try:
+                        logging.info("  [1/12] Running dws_price_adj_daily...")
+                        _run_price_adj(cursor, trade_date)
+                        logging.info("  [2/12] Running dws_fina_pit_daily...")
+                        _run_fina_pit(cursor, trade_date)
+                        logging.info("  [3/12] Running dws_tech_pattern...")
+                        _run_tech_pattern(cursor, trade_date)
+                        logging.info("  [4/12] Running dws_capital_flow...")
+                        _run_capital_flow(cursor, trade_date)
+                        logging.info("  [5/12] Running dws_leverage_sentiment...")
+                        _run_leverage_sentiment(cursor, trade_date)
+                        logging.info("  [6/12] Running dws_chip_dynamics...")
+                        _run_chip_dynamics(cursor, trade_date)
+                        # Scoring tables
+                        logging.info("  [7/12] Running dws_momentum_score...")
+                        _run_momentum_score(cursor, trade_date)
+                        logging.info("  [8/12] Running dws_value_score...")
+                        _run_value_score(cursor, trade_date)
+                        logging.info("  [9/12] Running dws_quality_score...")
+                        _run_quality_score(cursor, trade_date)
+                        logging.info("  [10/12] Running dws_technical_score...")
+                        _run_technical_score(cursor, trade_date)
+                        logging.info("  [11/12] Running dws_capital_score...")
+                        _run_capital_score(cursor, trade_date)
+                        logging.info("  [12/16] Running dws_chip_score...")
+                        _run_chip_score(cursor, trade_date)
+                        # Enhanced factors (Phase 1)
+                        logging.info("  [13/16] Running dws_liquidity_factor...")
+                        run_liquidity_factor(cursor, trade_date)
+                        if use_batch_momentum:
+                            logging.info("  [14/16] Running dws_momentum_extended... (deferred to batch)")
+                        else:
                             logging.info("  [14/16] Running dws_momentum_extended...")
                             run_momentum_extended(cursor, trade_date)
-                            logging.info("  [15/16] Running dws_quality_extended...")
-                            run_quality_extended(cursor, trade_date)
-                            logging.info("  [16/16] Running dws_risk_factor...")
-                            run_risk_factor(cursor, trade_date)
+                        logging.info("  [15/16] Running dws_quality_extended...")
+                        run_quality_extended(cursor, trade_date)
+                        logging.info("  [16/16] Running dws_risk_factor...")
+                        run_risk_factor(cursor, trade_date)
+                        if (not use_batch_momentum) and (not disable_watermark):
                             update_watermark(cursor, "dws", trade_date, "SUCCESS")
-                            conn.commit()
-                            logging.info(f"  Completed trade_date={trade_date}")
-                        except Exception as exc:
+                        conn.commit()
+                        logging.info(f"  Completed trade_date={trade_date}")
+                    except Exception as exc:
+                        if not disable_watermark:
                             update_watermark(cursor, "dws", last_date, "FAILED", str(exc))
-                            conn.rollback()
-                            raise
+                        conn.rollback()
+                        raise
+
+            if use_batch_momentum and trade_dates:
+                with conn.cursor() as cursor:
+                    logging.info(
+                        "Running dws_momentum_extended in batch for range %s-%s...",
+                        trade_dates[0],
+                        trade_dates[-1],
+                    )
+                    run_momentum_extended_batch(cursor, trade_dates[0], trade_dates[-1])
+                    if not disable_watermark:
+                        update_watermark(cursor, "dws", trade_dates[-1], "SUCCESS")
+                    conn.commit()
 
             with conn.cursor() as cursor:
                 log_run_end(cursor, run_id, "SUCCESS")

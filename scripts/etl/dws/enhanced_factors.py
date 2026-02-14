@@ -208,5 +208,5 @@ def run_risk_factor(cursor, trade_date: int, end_date: int | None = None) -> Non
         beta_60 = VALUES(beta_60),
         ivol_20 = VALUES(ivol_20)
     """
-    start_lookback = _get_lookback_date(cursor, trade_date, 100)
-    cursor.execute(sql, (start_lookback, trade_date, end_date if end_date else trade_date))
+    start_date = _get_lookback_date(cursor, trade_date, 100)
+    cursor.execute(sql, (start_date, trade_date))
