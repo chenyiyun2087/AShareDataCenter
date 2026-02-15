@@ -7,10 +7,20 @@
 
 import pandas as pd
 from sqlalchemy import create_engine, text
-from typing import Dict, Optional, List
+from typing import Dict, List
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+DIMENSION_SCORE_CAPS = {
+    'momentum_score': 25,
+    'value_score': 20,
+    'quality_score': 20,
+    'technical_score': 15,
+    'capital_score': 10,
+    'chip_score': 10,
+}
 
 
 class ScoreQuery:
@@ -63,6 +73,11 @@ class ScoreQuery:
         WHERE m.trade_date = :trade_date
         """
         return pd.read_sql(text(sql), self.engine, params={"trade_date": trade_date})
+
+    @staticmethod
+    def get_dimension_score_caps() -> Dict[str, int]:
+        """返回各维度理论满分。"""
+        return DIMENSION_SCORE_CAPS.copy()
     
     def get_top_stocks(self, trade_date: int, top_n: int = 50, 
                        min_score: float = 0) -> pd.DataFrame:
@@ -162,11 +177,11 @@ class ScoreQuery:
         SELECT 
             m.trade_date, m.ts_code,
             m.ret_5_score, m.ret_20_score, m.ret_60_score, 
-            m.vol_ratio_score, m.turnover_score, m.momentum_score,
+            m.vol_ratio_score, m.turnover_score, m.mtm_score, m.mtmma_score, m.momentum_score,
             v.pe_score, v.pb_score, v.ps_score, v.value_score,
             q.roe_score, q.margin_score, q.leverage_score, q.quality_score,
-            t.macd_score, t.kdj_score, t.rsi_score, t.technical_score,
-            c.elg_score, c.lg_score, c.capital_score,
+            t.macd_score, t.kdj_score, t.rsi_score, t.cci_score, t.bias_score, t.technical_score,
+            c.elg_score, c.lg_score, c.margin_score, c.capital_score,
             ch.winner_score, ch.cost_score, ch.chip_score,
             (COALESCE(m.momentum_score, 0) + COALESCE(v.value_score, 0) + 
              COALESCE(q.quality_score, 0) + COALESCE(t.technical_score, 0) + 
@@ -240,7 +255,7 @@ if __name__ == '__main__':
     import sys
     import argparse
     import logging
-    from advanced_analysis import AdvancedAnalyzer, create_score_report
+    from score.claude_score.advanced_analysis import AdvancedAnalyzer, create_score_report
     
     # 配置日志输出到控制台
     logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -257,10 +272,21 @@ if __name__ == '__main__':
     parser.add_argument('--stamp-tax', type=float, default=0.001, help='印花税 (默认0.1%%)')
     parser.add_argument('--slippage', type=float, default=0.001, help='滑点 (默认0.1%%)')
     parser.add_argument('--report', action='store_true', help='生成Excel分析报告')
+    parser.add_argument('--host', default='localhost', help='数据库地址')
+    parser.add_argument('--port', type=int, default=3306, help='数据库端口')
+    parser.add_argument('--user', default='root', help='数据库用户')
+    parser.add_argument('--password', default='', help='数据库密码')
+    parser.add_argument('--database', default='tushare_stock', help='数据库名')
     
     args = parser.parse_args()
     
-    engine = get_engine(password='19871019')
+    engine = get_engine(
+        host=args.host,
+        port=args.port,
+        user=args.user,
+        password=args.password,
+        database=args.database,
+    )
     q = ScoreQuery(engine)
     analyzer = AdvancedAnalyzer(engine)
     

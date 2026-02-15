@@ -6,7 +6,7 @@
 import pandas as pd
 import numpy as np
 from sqlalchemy import create_engine, text
-from typing import List, Dict, Optional
+from typing import Dict
 import logging
 import os
 from datetime import datetime
@@ -340,20 +340,25 @@ def create_score_report(engine, trade_date: int, output_file: str = None):
 
 
 if __name__ == '__main__':
+    import argparse
+
     # 配置日志
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
-    
-    # 数据库连接
-    connection_string = "mysql+pymysql://root:19871019@localhost:3306/tushare_stock?charset=utf8mb4"
+
+    parser = argparse.ArgumentParser(description='Claude评分高级分析工具')
+    parser.add_argument('--date', type=int, default=20260206, help='分析日期(YYYYMMDD)')
+    parser.add_argument('--host', default='localhost', help='数据库地址')
+    parser.add_argument('--port', type=int, default=3306, help='数据库端口')
+    parser.add_argument('--user', default='root', help='数据库用户')
+    parser.add_argument('--password', default='', help='数据库密码')
+    parser.add_argument('--database', default='tushare_stock', help='数据库名')
+    args = parser.parse_args()
+
+    connection_string = (
+        f"mysql+pymysql://{args.user}:{args.password}@{args.host}:{args.port}/{args.database}"
+        f"?charset=utf8mb4"
+    )
     engine = create_engine(connection_string)
-    
+
     analyzer = AdvancedAnalyzer(engine)
-    
-    # 测试回测 (2025年)
-    # analyzer.backtest_score_strategy(20250101, 20250601)
-    
-    # 测试行业对比
-    analyzer.compare_by_industry(20260206)
-    
-    # 测试报告生成
-    # create_score_report(engine, 20260206)
+    analyzer.compare_by_industry(args.date)
