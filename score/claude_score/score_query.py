@@ -242,7 +242,7 @@ if __name__ == '__main__':
     策略回测 (--backtest)： 回测过去 3 个月评分策略的表现（Top 10 等权重持有）。
     python score/claude_score/score_query.py --backtest --num-stocks N  持仓股票数 (默认10)
     --initial-capital X  初始资金 (默认1000000)
-    --hold N        持仓天数 (默认20)
+    --hold N        目标平均持仓天数 (默认20)
     --commission X  佣金率 (默认0.0003=0.03%)
     --stamp-tax X   印花税 (默认0.001=0.1%)
     --slippage X    滑点 (默认0.001=0.1%)

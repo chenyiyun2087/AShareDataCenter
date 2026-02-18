@@ -63,6 +63,9 @@ def test_backtest_supports_initial_capital_and_num_stocks(monkeypatch) -> None:
     assert not result.empty
     assert result.iloc[0]["nav"] == 2_000_000
     assert result["holdings_count"].max() <= 2
+    # day-1后每日执行再平衡流程
+    if len(result) > 1:
+        assert result.iloc[1:]["is_rebalance"].all()
 
 
 def test_backtest_top_n_alias_overrides_num_stocks(monkeypatch) -> None:
@@ -81,3 +84,21 @@ def test_backtest_top_n_alias_overrides_num_stocks(monkeypatch) -> None:
 
     assert not result.empty
     assert result["holdings_count"].max() <= 1
+
+
+def test_backtest_holding_days_control(monkeypatch) -> None:
+    analyzer = AdvancedAnalyzer(engine=None)
+    monkeypatch.setattr(analyzer, "_get_score_data", lambda s, e: _mock_scores())
+    monkeypatch.setattr(pd, "read_sql", lambda *args, **kwargs: _mock_prices())
+
+    result = analyzer.backtest_score_strategy(
+        start_date=20240101,
+        end_date=20240103,
+        num_stocks=2,
+        holding_days=20,
+        initial_capital=1_000_000,
+    )
+
+    assert not result.empty
+    assert "avg_holding_days" in result.columns
+    assert result["avg_holding_days"].max() <= 20

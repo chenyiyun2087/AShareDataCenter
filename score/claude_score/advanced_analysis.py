@@ -57,7 +57,8 @@ class AdvancedAnalyzer:
         4. 加入交易成本 (佣金+印花税+滑点)
         5. 调仓日不计算当日涨跌幅 (开盘买入，收益从T+1开始)
         
-        策略逻辑：根据T-1日评分，在T日开盘买入num_stocks只非涨停股票，持有holding_days天
+        策略逻辑：根据T-1日评分在T日执行日度再平衡，目标持仓为Top-N(N=num_stocks)，
+        并通过日均替换仓位控制平均持有天数接近holding_days。
         """
         logger.info(f"开始回测评分策略: {start_date} - {end_date}")
         if top_n is not None and top_n > 0:
@@ -66,6 +67,8 @@ class AdvancedAnalyzer:
             raise ValueError("num_stocks must be > 0")
         if initial_capital <= 0:
             raise ValueError("initial_capital must be > 0")
+        if holding_days <= 0:
+            raise ValueError("holding_days must be > 0")
 
         logger.info(f"参数: 持仓股票数 {num_stocks}, 持有 {holding_days} 天")
         logger.info(f"初始资金: {initial_capital:,.2f}")
@@ -117,112 +120,161 @@ class AdvancedAnalyzer:
             prev_scores = df[df['trade_date'] == prev_date][['ts_code', 'total_score']].copy()
             date_to_prev_scores[curr_date] = prev_scores
         
-        current_portfolio = []
+        current_portfolio: list[str] = []
+        holding_age: dict[str, int] = {}
         portfolio_value = float(initial_capital)
         daily_nav = []
-        next_rebalance_idx = 1  # 从第2天开始(需要T-1评分)
-        
+
+        # 目标日均换手：按 holding_days 分摊，近似实现平均持有天数
+        daily_replace_count = max(1, int(round(num_stocks / max(holding_days, 1))))
+
         for i, date in enumerate(trade_dates):
             day_return = 0.0
             is_rebalance_day = False
             transaction_cost = 0.0
-            
-            # --- 调仓逻辑 (T日使用T-1评分) ---
-            if i == next_rebalance_idx and date in date_to_prev_scores:
+            buy_count = 0
+            sell_count = 0
+
+            # 首日无 T-1 评分，无法建仓
+            if i > 0 and date in date_to_prev_scores:
                 is_rebalance_day = True
                 prev_scores = date_to_prev_scores[date]
-                
+
                 # 获取T日行情数据 (判断涨停/停牌)
                 today_data = df[df['trade_date'] == date].copy()
-                
+
                 # 合并T-1评分与T日行情
-                selection_df = pd.merge(prev_scores, today_data[['ts_code', 'is_limit_up', 'is_suspended']], 
-                                       on='ts_code', how='inner')
-                
+                selection_df = pd.merge(
+                    prev_scores,
+                    today_data[['ts_code', 'is_limit_up', 'is_suspended']],
+                    on='ts_code',
+                    how='inner',
+                )
+
                 # 过滤: 不能买入涨停股和停牌股
-                eligible = selection_df[(selection_df['is_limit_up'] == 0) & 
-                                        (selection_df['is_suspended'] == 0)]
-                
+                eligible = selection_df[
+                    (selection_df['is_limit_up'] == 0) &
+                    (selection_df['is_suspended'] == 0)
+                ].sort_values('total_score', ascending=False)
+
                 if not eligible.empty:
-                    # 按T-1评分选股
-                    top_stocks = eligible.nlargest(num_stocks, 'total_score')['ts_code'].tolist()
-                    
-                    # 计算换手成本
-                    old_portfolio = set(current_portfolio)
-                    new_portfolio = set(top_stocks)
-                    
-                    # 卖出成本 (佣金+印花税+滑点)
-                    sell_stocks = old_portfolio - new_portfolio
-                    if old_portfolio:
-                        sell_ratio = len(sell_stocks) / len(old_portfolio) if old_portfolio else 0
-                        sell_cost = sell_ratio * (commission + stamp_tax + slippage)
-                    else:
-                        sell_cost = 0
-                    
-                    # 买入成本 (佣金+滑点)
-                    buy_stocks = new_portfolio - old_portfolio
-                    if new_portfolio:
-                        buy_ratio = len(buy_stocks) / len(new_portfolio) if new_portfolio else 0
-                        buy_cost = buy_ratio * (commission + slippage)
-                    else:
-                        buy_cost = 0
-                    
+                    rank_codes = eligible['ts_code'].tolist()
+                    rank_map = {code: idx for idx, code in enumerate(rank_codes)}
+                    top_pool = set(rank_codes[:num_stocks])
+
+                    # 先让现有持仓年龄 +1
+                    for code in list(holding_age.keys()):
+                        holding_age[code] += 1
+
+                    old_portfolio = list(current_portfolio)
+                    old_set = set(old_portfolio)
+
+                    # 候选卖出：优先卖出非Top池且持有更久且排名靠后
+                    def _sell_key(code: str):
+                        in_top = 1 if code in top_pool else 0
+                        age = holding_age.get(code, 0)
+                        rank = rank_map.get(code, 10**9)
+                        return (in_top, -age, -rank)
+
+                    sell_candidates = sorted(old_portfolio, key=_sell_key)
+                    planned_sell = min(daily_replace_count, len(sell_candidates))
+                    sell_list = sell_candidates[:planned_sell]
+
+                    remain = [c for c in old_portfolio if c not in set(sell_list)]
+                    remain_set = set(remain)
+
+                    # 先从Top池补齐，再从全体rank补齐，确保持仓数=num_stocks
+                    buy_list: list[str] = []
+                    for code in rank_codes:
+                        if code in remain_set or code in buy_list:
+                            continue
+                        buy_list.append(code)
+                        if len(remain) + len(buy_list) >= num_stocks:
+                            break
+
+                    new_portfolio = remain + buy_list
+                    new_portfolio = new_portfolio[:num_stocks]
+                    new_set = set(new_portfolio)
+
+                    # 交易成本按组合替换比例估算
+                    sell_stocks = old_set - new_set
+                    buy_stocks = new_set - old_set
+                    sell_count = len(sell_stocks)
+                    buy_count = len(buy_stocks)
+
+                    sell_ratio = sell_count / max(len(old_set), 1)
+                    buy_ratio = buy_count / max(len(new_set), 1)
+                    sell_cost = sell_ratio * (commission + stamp_tax + slippage)
+                    buy_cost = buy_ratio * (commission + slippage)
                     transaction_cost = sell_cost + buy_cost
-                    
-                    current_portfolio = top_stocks
-                    next_rebalance_idx = min(i + holding_days, len(trade_dates))
-                    
+
+                    current_portfolio = new_portfolio
+
+                    # 维护持仓年龄
+                    for code in list(holding_age.keys()):
+                        if code not in new_set:
+                            holding_age.pop(code, None)
+                    for code in current_portfolio:
+                        if code in old_set:
+                            holding_age[code] = holding_age.get(code, 1)
+                        else:
+                            holding_age[code] = 1
+
                     excluded_limit_up = len(selection_df[selection_df['is_limit_up'] == 1])
                     excluded_suspended = len(selection_df[selection_df['is_suspended'] == 1])
-                    logger.info(f"{date}: 调仓, 买入{len(current_portfolio)}只 (排除涨停{excluded_limit_up}, 停牌{excluded_suspended})")
-            
+                    logger.info(
+                        f"{date}: 日度再平衡, 持仓{len(current_portfolio)}只, "
+                        f"买入{buy_count}只, 卖出{sell_count}只 "
+                        f"(排除涨停{excluded_limit_up}, 停牌{excluded_suspended})"
+                    )
+
             # --- 收益计算 ---
             if current_portfolio:
                 portfolio_data = df[(df['trade_date'] == date) & (df['ts_code'].isin(current_portfolio))]
                 if not portfolio_data.empty:
-                    if is_rebalance_day:
-                        # 调仓日: 假设开盘买入, 不享受当日涨跌幅
-                        # 但需要扣除交易成本
-                        day_return = -transaction_cost
-                    else:
-                        # 持仓日: 按pct_chg计算收益
-                        avg_chg = portfolio_data['pct_chg'].mean()
-                        day_return = avg_chg / 100.0
-            
+                    avg_chg = portfolio_data['pct_chg'].mean()
+                    day_return = (avg_chg / 100.0) - transaction_cost
+
             # 更新净值
             portfolio_value *= (1 + day_return)
-            
+
+            avg_holding_days = float(np.mean(list(holding_age.values()))) if holding_age else 0.0
             daily_nav.append({
                 'trade_date': date,
                 'nav': portfolio_value,
                 'daily_return': day_return,
                 'holdings_count': len(current_portfolio),
-                'is_rebalance': is_rebalance_day
+                'is_rebalance': is_rebalance_day,
+                'buy_count': buy_count,
+                'sell_count': sell_count,
+                'avg_holding_days': avg_holding_days,
             })
-            
+
         df_results = pd.DataFrame(daily_nav)
-        
+
         if not df_results.empty:
             # 计算回撤
             df_results['max_nav'] = df_results['nav'].cummax()
             df_results['drawdown'] = (df_results['nav'] - df_results['max_nav']) / df_results['max_nav']
-            
+
             total_ret = (df_results['nav'].iloc[-1] / float(initial_capital)) - 1
             max_dd = df_results['drawdown'].min()
-            
+
             # 年化收益 (简单估算)
             days = len(trade_dates)
             annual_ret = (1 + total_ret) ** (252 / days) - 1 if days > 0 else 0
-            
+
             # 计算调仓次数
-            rebalance_count = df_results['is_rebalance'].sum()
-            
-            logger.info(f"\n回测结果 (修正版):")
+            rebalance_count = int(df_results['is_rebalance'].sum())
+            avg_hold = float(df_results['avg_holding_days'].replace(0, np.nan).mean()) if 'avg_holding_days' in df_results else 0.0
+
+            logger.info(f"\n回测结果 (日度再平衡版):")
             logger.info(f"总收益率: {total_ret*100:.2f}%")
             logger.info(f"年化收益: {annual_ret*100:.2f}%")
             logger.info(f"最大回撤: {max_dd*100:.2f}%")
             logger.info(f"调仓次数: {rebalance_count}")
-            
+            logger.info(f"平均持有天数(样本均值): {avg_hold:.2f}")
+
         return df_results
 
     
