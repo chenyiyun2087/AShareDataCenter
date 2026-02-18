@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 
 # Factor category names (7 alpha categories)
@@ -34,8 +34,10 @@ class OptimizerConfig:
     oos_end: int = 20251231
 
     # --- Portfolio parameters ---
-    top_n: int = 5  # Concentrated portfolio
+    num_stocks: int = 5  # Number of stocks to hold
+    top_n: Optional[int] = None  # Backward-compatible alias for num_stocks
     holding_days: int = 20  # Monthly rebalance
+    initial_capital: float = 1_000_000.0  # Initial portfolio capital
 
     # --- Transaction costs ---
     commission: float = 0.0003  # 0.03% per trade
@@ -65,3 +67,17 @@ class OptimizerConfig:
             (20240630, 20240701, 20241231),
             (20241231, 20250101, 20250630),
         ]
+
+
+    def __post_init__(self) -> None:
+        """Normalize aliases and validate key parameters."""
+        if self.top_n is not None and self.top_n > 0:
+            self.num_stocks = self.top_n
+        self.top_n = self.num_stocks
+
+        if self.num_stocks <= 0:
+            raise ValueError("num_stocks must be > 0")
+        if self.holding_days <= 0:
+            raise ValueError("holding_days must be > 0")
+        if self.initial_capital <= 0:
+            raise ValueError("initial_capital must be > 0")
