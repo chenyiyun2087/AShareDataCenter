@@ -60,6 +60,13 @@
    # 历史数据完整性回溯（检查过去 N 天的各层数据行数）
    python scripts/check/inspect_data_completeness.py --end-date 20260213 --days 30 --config config/etl.ini
    ```
+
+9. 指数专题同步（A股核心指数 + 申万行业）：
+   ```bash
+   python scripts/sync/run_index_suite.py --start-date 20100101 --end-date 20261231 --config config/etl.ini
+   python scripts/check/check_index_suite_status.py --start-date 20100101 --end-date 20261231 --config config/etl.ini --fail-on-empty
+   ```
+
 8. Web 控制台：
    ```bash
    # 启动 Flask 服务（已集成前端静态资源）
@@ -125,6 +132,12 @@ npm run dev
 | | `ods_weekly` | 周频行情 |
 | | `ods_monthly` | 月频行情 |
 | | `ods_index_daily` | 指数日频行情 (沪深300/上证/创业板等) |
+| | `ods_index_basic` | 指数基础信息 (名称/发布方/基日基点) |
+| | `ods_index_member` | 指数成分股信息 |
+| | `ods_index_weight` | 指数成分权重 |
+| | `ods_index_tech_factor` | 指数技术因子 (index_dailybasic) |
+| | `ods_sw_index_classify` | 申万行业指数分类明细 |
+| | `ods_sw_index_daily` | 申万行业指数日频行情 |
 | | `ods_daily_basic` | 每日指标 (PE/PB/换手率等) |
 | | `ods_adj_factor` | 复权因子 |
 | | `ods_stk_factor` | 技术因子 (100+字段, MACD/KDJ/RSI/BOLL等) |
