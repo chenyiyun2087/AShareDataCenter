@@ -15,6 +15,18 @@ from ..base.runtime import (
     update_watermark,
 )
 
+def _create_tmp_base_adj(cursor) -> None:
+    """Create a temporary table for base adjustment factors to optimize standardization."""
+    cursor.execute("DROP TEMPORARY TABLE IF EXISTS tmp_base_adj")
+    cursor.execute("""
+        CREATE TEMPORARY TABLE tmp_base_adj AS
+        SELECT af.ts_code, af.adj_factor AS base_adj
+        FROM dwd_adj_factor af
+        JOIN (SELECT MAX(trade_date) AS base_date FROM dwd_daily) lt
+            ON af.trade_date = lt.base_date
+    """)
+    cursor.execute("ALTER TABLE tmp_base_adj ADD PRIMARY KEY (ts_code)")
+
 
 def load_dwd_daily(cursor, trade_date: int) -> None:
     sql = (
@@ -96,6 +108,7 @@ def load_dwd_fina_indicator(cursor, start_date: int, end_date: int) -> None:
 
 def load_dwd_stock_daily_standard(cursor, trade_date: int) -> None:
     """Load standardized price data with front-adjusted prices."""
+    # Optimization: Use tmp_base_adj created in _create_tmp_base_adj
     sql = """
     INSERT INTO dwd_stock_daily_standard (
         trade_date, ts_code, adj_open, adj_high, adj_low, adj_close,
@@ -113,12 +126,7 @@ def load_dwd_stock_daily_standard(cursor, trade_date: int) -> None:
         d.amount
     FROM dwd_daily d
     JOIN dwd_adj_factor a ON a.trade_date = d.trade_date AND a.ts_code = d.ts_code
-    JOIN (
-        SELECT af.ts_code, af.adj_factor AS base_adj
-        FROM dwd_adj_factor af
-        JOIN (SELECT MAX(trade_date) AS base_date FROM dwd_daily) lt
-            ON af.trade_date = lt.base_date
-    ) b ON b.ts_code = d.ts_code
+    JOIN tmp_base_adj b ON b.ts_code = d.ts_code
     LEFT JOIN dwd_daily_basic db ON db.trade_date = d.trade_date AND db.ts_code = d.ts_code
     WHERE d.trade_date = %s
     ON DUPLICATE KEY UPDATE
@@ -157,8 +165,11 @@ def load_dwd_fina_snapshot(cursor, trade_date: int) -> None:
     cursor.execute(sql, (trade_date, trade_date))
 
 
-def load_dwd_margin_sentiment(cursor, trade_date: int) -> None:
+def load_dwd_margin_sentiment(cursor, trade_date: int, prev_trade_date: Optional[int]) -> None:
     """Load margin trading sentiment indicators."""
+    if not prev_trade_date:
+        return
+    
     sql = """
     INSERT INTO dwd_margin_sentiment (
         trade_date, ts_code, rz_net_buy, rz_net_buy_ratio, rz_change_rate, rq_pressure
@@ -172,11 +183,7 @@ def load_dwd_margin_sentiment(cursor, trade_date: int) -> None:
         CASE WHEN d.vol > 0 THEN m.rqyl / (d.vol * 100) ELSE NULL END AS rq_pressure
     FROM ods_margin_detail m
     JOIN dwd_daily d ON d.trade_date = m.trade_date AND d.ts_code = m.ts_code
-    LEFT JOIN (
-        SELECT ts_code, trade_date, rzye,
-               LAG(rzye) OVER (PARTITION BY ts_code ORDER BY trade_date) AS lag_rzye
-        FROM ods_margin_detail
-    ) lag_m ON lag_m.trade_date = m.trade_date AND lag_m.ts_code = m.ts_code
+    LEFT JOIN ods_margin_detail lag_m ON lag_m.trade_date = %s AND lag_m.ts_code = m.ts_code
     WHERE m.trade_date = %s
     ON DUPLICATE KEY UPDATE
         rz_net_buy = VALUES(rz_net_buy),
@@ -184,7 +191,7 @@ def load_dwd_margin_sentiment(cursor, trade_date: int) -> None:
         rz_change_rate = VALUES(rz_change_rate),
         rq_pressure = VALUES(rq_pressure)
     """
-    cursor.execute(sql, (trade_date,))
+    cursor.execute(sql, (prev_trade_date, trade_date))
 
 
 def load_dwd_chip_stability(cursor, trade_date: int) -> None:
@@ -269,21 +276,25 @@ def run_full(start_date: int, end_date: Optional[int] = None) -> None:
             with conn.cursor() as cursor:
                 trade_dates = list_trade_dates(cursor, start_date, end_date)
 
-
             total_dates = len(trade_dates)
             logging.info(f"Processing {total_dates} trade dates from {start_date}")
             
+            with conn.cursor() as cursor:
+                _create_tmp_base_adj(cursor)
+                conn.commit()
+
             for idx, trade_date in enumerate(trade_dates, 1):
                 if idx == 1 or idx % 50 == 0 or idx == total_dates:
                     logging.info(f"[{idx}/{total_dates}] Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
+                    prev_trade_date = trade_dates[idx-2] if idx > 1 else None
                     load_dwd_daily(cursor, trade_date)
                     load_dwd_daily_basic(cursor, trade_date)
                     load_dwd_adj_factor(cursor, trade_date)
                     # New DWD tables
                     load_dwd_stock_daily_standard(cursor, trade_date)
                     load_dwd_fina_snapshot(cursor, trade_date)
-                    load_dwd_margin_sentiment(cursor, trade_date)
+                    load_dwd_margin_sentiment(cursor, trade_date, prev_trade_date)
                     load_dwd_chip_stability(cursor, trade_date)
                     load_dwd_stock_label_daily(cursor, trade_date)
                     conn.commit()
@@ -351,18 +362,26 @@ def run_incremental(start_date: Optional[int] = None, end_date: Optional[int] = 
                 today_int = int(datetime.now().strftime('%Y%m%d'))
                 trade_dates = [d for d in trade_dates if d <= today_int]
 
+            with conn.cursor() as cursor:
+                _create_tmp_base_adj(cursor)
+                conn.commit()
 
             for trade_date in trade_dates:
                 logging.info(f"Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
                     try:
+                        # Get previous trade date
+                        cursor.execute("SELECT MAX(trade_date) FROM dwd_daily WHERE trade_date < %s", (trade_date,))
+                        res = cursor.fetchone()
+                        prev_trade_date = res[0] if res else None
+                        
                         load_dwd_daily(cursor, trade_date)
                         load_dwd_daily_basic(cursor, trade_date)
                         load_dwd_adj_factor(cursor, trade_date)
                         # New DWD tables
                         load_dwd_stock_daily_standard(cursor, trade_date)
                         load_dwd_fina_snapshot(cursor, trade_date)
-                        load_dwd_margin_sentiment(cursor, trade_date)
+                        load_dwd_margin_sentiment(cursor, trade_date, prev_trade_date)
                         load_dwd_chip_stability(cursor, trade_date)
                         load_dwd_stock_label_daily(cursor, trade_date)
                         update_watermark(cursor, "dwd_daily", trade_date, "SUCCESS")

@@ -242,31 +242,42 @@ npm run dev
 | **股票因子 (Pro)** | `ods_stk_factor` | 18:00 - 20:00 | MACD、RSI 等技术指标 |
 | **融资融券 (明细)** | `ods_margin`, `ods_margin_detail` | **T+1 08:30** | 交易所盘后结算较晚，通常需次日获取 |
 | **复权因子** | `ods_adj_factor` | **T 盘前 09:15** | 用于当日价格复权计算 |
-228: 
-229: ### 批量任务安排建议
-230: 
-231: #### 1. 下午同步 (17:00 以后)
-232: 同步基础行情与 DWD/DWS/ADS 基础计算。
-233: ```bash
-234: # 使用宽容模式 (--lenient)，会自动忽略尚未发布的特征数据（如两融）
-235: python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient
-236: ```
-237: 
-238: #### 2. 晚间强化 (20:00 以后)
-239: 获取大部分特征数据（资金流、筹码、技术因子）并更新对应的增强因子。
-240: ```bash
-241: python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient
-242: ```
-243: 
-244: #### 3. 完整同步 (T+1 09:00 以前)
-245: 补齐最晚发布的融资融券数据，完成全量 ADS 评分更新。
-246: ```bash
-247: # 不带 --lenient，确保所有检查通过
-248: python scripts/sync/run_daily_pipeline.py --config config/etl.ini
-249: ```
-250: 
-251: ### 宽容模式说明 (`--lenient`)
-252: 由于 TuShare 各类数据发布时间不一，`--lenient` 参数允许流水线在“今日”部分特征数据缺失时仅记录警告而不中断退出。这适用于需要在收盘后立即查看初步分析结果的场景。
+
+### 批量任务安排建议 (Batch Schedule Suggestions)
+
+为适配 TuShare 数据发布节奏，流水线分为三个核心阶段执行：
+
+#### 1. 下午同步 (17:00 以后) - 基础行情阶段
+同步基础行情、估值与 DWD/DWS/ADS 基础计算。
+- **命令**: `python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient`
+- **说明**: 使用宽容模式 (`--lenient`)，会自动忽略尚未发布的特征数据（如主力流向、两融），但在 `ods_daily` 缺失时仍会报错。
+
+#### 2. 晚间强化 (20:00 以后) - 特征更新与模型就绪
+获取绝大部分特征数据（资金流、筹码、技术因子）并自动运行**数据完整性检查**。
+- **命令**: `scripts/schedule/run_2000_task.sh`
+- **日志**: 详细任务过程记录在 `logs/cron_2000.log`，全链路状态报告追加至 `logs/yyyyMMdd.log`。
+- **说明**: 该阶段通过完整性检查确认“今日”数据全貌，确保模型预测基于最新且完整的特征。
+
+#### 3. 完整同步 (次日 T+1 08:30 以前) - 最终闭环阶段
+补齐最晚发布的融资融券数据，完成全量 ADS 评分更新。
+- **命令**: `python scripts/sync/run_daily_pipeline.py --config config/etl.ini`
+- **说明**: 不带 `--lenient`，确保所有表、所有维度的数据均完整且检查通过。
+
+### 自动化调度 (Cron)
+建议在 `crontab` 中配置以下脚本：
+```bash
+# 1. 17:00 Afternoon Sync (Basic Data)
+0 17 * * 1-5 cd /path/to/project && .venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient
+
+# 2. 20:00 Evening Enhancement (Features & Factors + Integrity Check)
+0 20 * * 1-5 /path/to/project/scripts/schedule/run_2000_task.sh
+
+# 3. 08:30 T+1 Morning Completion (Margin Data & Full ADS)
+30 8 * * 1-5 cd /path/to/project && .venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini
+```
+
+### 宽容模式说明 (`--lenient`)
+由于 TuShare 各类数据发布时间不一，`--lenient` 参数允许流水线在“今日”部分特征数据缺失时仅记录警告而不中断退出。这适用于需要在收盘后立即查看初步分析结果的场景。
 ---
 
 ## 详细模块分析 (ETL 流程)

@@ -14,10 +14,13 @@ from ..base.runtime import (
 )
 
 
-def _run_features(cursor, trade_date: int | None = None) -> None:
+def _run_features(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE d.trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE d.trade_date = %s"
         params.append(trade_date)
     sql = f"""
@@ -89,10 +92,13 @@ def _run_features(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def _run_universe(cursor, trade_date: int | None = None) -> None:
+def _run_universe(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE d.trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE d.trade_date = %s"
         params.append(trade_date)
     sql = f"""
@@ -128,15 +134,16 @@ def _run_universe(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
-def _run_stock_score(cursor, trade_date: int | None = None) -> None:
+def _run_stock_score(cursor, trade_date: int | None = None, end_date: int | None = None) -> None:
     """Calculate comprehensive stock scores with Z-score normalization and dynamic weights."""
     filter_sql = ""
     params = []
-    if trade_date is not None:
+    if trade_date is not None and end_date is not None:
+        filter_sql = "WHERE tp.trade_date BETWEEN %s AND %s"
+        params = [trade_date, end_date]
+    elif trade_date is not None:
         filter_sql = "WHERE tp.trade_date = %s"
         params.append(trade_date)
-    else:
-        params = []
     
     # Use percentile rank for normalization (maps to 0-100 range)
     sql = f"""
@@ -212,8 +219,18 @@ def _run_stock_score(cursor, trade_date: int | None = None) -> None:
     cursor.execute(sql, params if params else None)
 
 
+def _run_ads_batch(cursor, start_date: int, end_date: int) -> None:
+    """Execute all ADS steps in batch mode for a date range."""
+    logging.info(f"  [1/3] Running ads_features_stock_daily batch...")
+    _run_features(cursor, start_date, end_date)
+    logging.info(f"  [2/3] Running ads_universe_daily batch...")
+    _run_universe(cursor, start_date, end_date)
+    logging.info(f"  [3/3] Running ads_stock_score_daily batch...")
+    _run_stock_score(cursor, start_date, end_date)
+
+
 def run_full(start_date: int, end_date: int | None = None) -> None:
-    """Run full ADS ETL by processing each trade date to avoid lock overflow."""
+    """Run full ADS ETL."""
     cfg = get_env_config()
     with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
@@ -222,19 +239,17 @@ def run_full(start_date: int, end_date: int | None = None) -> None:
         try:
             with conn.cursor() as cursor:
                 trade_dates = list_trade_dates(cursor, start_date, end_date)
+            
+            if not trade_dates:
+                logging.info("No trade dates to process.")
+                return
 
-            
             total_dates = len(trade_dates)
-            logging.info(f"Processing {total_dates} trade dates from {start_date}")
+            logging.info(f"Processing {total_dates} trade dates from {start_date} in BATCH mode")
             
-            for idx, trade_date in enumerate(trade_dates, 1):
-                if idx == 1 or idx % 50 == 0 or idx == total_dates:
-                    logging.info(f"[{idx}/{total_dates}] Processing trade_date={trade_date}")
-                with conn.cursor() as cursor:
-                    _run_features(cursor, trade_date)
-                    _run_universe(cursor, trade_date)
-                    _run_stock_score(cursor, trade_date)
-                    conn.commit()
+            with conn.cursor() as cursor:
+                _run_ads_batch(cursor, trade_dates[0], trade_dates[-1])
+                conn.commit()
             
             logging.info("All ADS tables updated successfully")
 
@@ -278,24 +293,29 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
                 today_int = int(datetime.now().strftime('%Y%m%d'))
                 trade_dates = [d for d in trade_dates if d <= today_int]
 
+            if not trade_dates:
+                logging.info("No new trade dates to process.")
+                return
 
-            for trade_date in trade_dates:
-                logging.info(f"Processing trade_date={trade_date}")
+            # Batch Optimization: if more than 5 days, use batch mode
+            if len(trade_dates) > 5:
+                logging.info(f"Running batch ADS sync for {len(trade_dates)} days: {trade_dates[0]} to {trade_dates[-1]}")
                 with conn.cursor() as cursor:
-                    try:
-                        logging.info("  [1/3] Running ads_features_stock_daily...")
-                        _run_features(cursor, trade_date)
-                        logging.info("  [2/3] Running ads_universe_daily...")
-                        _run_universe(cursor, trade_date)
-                        logging.info("  [3/3] Running ads_stock_score_daily...")
-                        _run_stock_score(cursor, trade_date)
-                        update_watermark(cursor, "ads", trade_date, "SUCCESS")
-                        conn.commit()
-                        logging.info(f"  Completed trade_date={trade_date}")
-                    except Exception as exc:
-                        update_watermark(cursor, "ads", last_date, "FAILED", str(exc))
-                        conn.rollback()
-                        raise
+                    _run_ads_batch(cursor, trade_dates[0], trade_dates[-1])
+                    update_watermark(cursor, "ads", trade_dates[-1], "SUCCESS")
+                    conn.commit()
+            else:
+                for trade_date in trade_dates:
+                    logging.info(f"Processing trade_date={trade_date}")
+                    with conn.cursor() as cursor:
+                        try:
+                            _run_ads_batch(cursor, trade_date, trade_date)
+                            update_watermark(cursor, "ads", trade_date, "SUCCESS")
+                            conn.commit()
+                        except Exception as exc:
+                            update_watermark(cursor, "ads", last_date, "FAILED", str(exc))
+                            conn.rollback()
+                            raise
 
             with conn.cursor() as cursor:
                 log_run_end(cursor, run_id, "SUCCESS")

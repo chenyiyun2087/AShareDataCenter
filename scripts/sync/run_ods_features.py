@@ -298,19 +298,33 @@ def _table_for_api(api_name: str) -> str:
 
 
 def _clean_extreme_values(df: pd.DataFrame) -> pd.DataFrame:
-    """Clamp extremely large valuation ratios that could cause MySQL 'Out of range' errors."""
-    # Columns likely to have extreme values or overflow DECIMAL(20,4)
-    # 20,4 can hold up to 9,999,999,999,999.9999
-    # We clamp at 1e12 to be safe
-    valuation_cols = ["pe", "pe_ttm", "pb", "ps", "ps_ttm", "dv_ratio", "dv_ttm"]
-    for col in valuation_cols:
-        if col in df.columns:
+    """Clamp extremely large valuation ratios and indicators that could cause MySQL 'Out of range' errors."""
+    # Columns that should be clamped to DECIMAL(12,6) limits (max 999,999)
+    # This includes valuation ratios and technical indicators
+    narrow_cols = [
+        "pe", "pe_ttm", "pb", "ps", "ps_ttm", "dv_ratio", "dv_ttm", 
+        "turnover_rate", "turnover_rate_f", "volume_ratio", "pct_chg", "change"
+    ]
+    
+    # Technical indicators are also often DECIMAL(12,6)
+    tech_cols = [col for col in df.columns if any(suffix in col for suffix in ["_bfq", "_hfq", "_qfq"])]
+    
+    # Large value columns like total_mv, circ_mv use DECIMAL(20,4) or similar
+    wide_cols = ["total_mv", "circ_mv", "amount", "vol"]
+    
+    df = df.copy()
+    for col in df.columns:
+        if col in narrow_cols or col in tech_cols or col in wide_cols:
             # Replace infinity with NaN first
             df[col] = df[col].replace([float("inf"), float("-inf")], float("nan"))
-            # Clamp to a large enough value for stock data but safe for SQL
-            max_val = 1_000_000_000.0  # 1 Billion is usually enough for ratios
-            df[col] = df[col].apply(lambda x: min(max_val, x) if pd.notnull(x) else x)
-            df[col] = df[col].apply(lambda x: max(-max_val, x) if pd.notnull(x) else x)
+            
+            if col in wide_cols:
+                max_val = 1_000_000_000_000_000.0 # 1 Quadrillion (fits in 20,4)
+            else:
+                max_val = 999_999.0 # Fits in DECIMAL(12,6)
+                
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].clip(lower=-max_val, upper=max_val)
     return df
 
 

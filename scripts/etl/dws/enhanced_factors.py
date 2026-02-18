@@ -57,7 +57,7 @@ def run_liquidity_factor(cursor, trade_date: int, end_date: int | None = None) -
                  ELSE NULL END AS vol_concentration
         FROM dwd_daily d
         LEFT JOIN dwd_daily_basic db ON db.trade_date = d.trade_date AND db.ts_code = d.ts_code
-        WHERE d.trade_date >= %s
+        WHERE d.trade_date >= %s AND d.trade_date <= %s
         WINDOW 
             w5 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW),
             w20 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)
@@ -71,7 +71,8 @@ def run_liquidity_factor(cursor, trade_date: int, end_date: int | None = None) -
         bid_ask_spread = VALUES(bid_ask_spread)
     """
     start_lookback = _get_lookback_date(cursor, trade_date, 60)
-    cursor.execute(sql, (start_lookback, trade_date, end_date if end_date else trade_date))
+    ed = end_date if end_date else trade_date
+    cursor.execute(sql, (start_lookback, ed, trade_date, ed))
 
 
 def run_momentum_extended(cursor, trade_date: int) -> None:
@@ -94,27 +95,26 @@ def run_momentum_extended_batch(cursor, start_trade_date: int, end_trade_date: i
         mom.vol_price_corr
     FROM (
         SELECT 
-            d.trade_date,
-            d.ts_code,
-            -- 52周高点距离
-            CASE WHEN MAX(d.close) OVER w250 > 0 
-                 THEN d.close / MAX(d.close) OVER w250 - 1 
+            adj.trade_date,
+            adj.ts_code,
+            -- 52周高点距离 (使用前复权收盘价)
+            CASE WHEN MAX(adj.qfq_close) OVER w250 > 0 
+                 THEN adj.qfq_close / MAX(adj.qfq_close) OVER w250 - 1 
                  ELSE NULL END AS high_52w_dist,
             -- 5日反转 (负的5日收益)
             -(adj.qfq_ret_5) AS reversal_5,
             -- 12m-1m动量
             CASE WHEN LAG(adj.qfq_close, 250) OVER w IS NOT NULL AND LAG(adj.qfq_close, 20) OVER w IS NOT NULL
                  THEN (adj.qfq_close / LAG(adj.qfq_close, 250) OVER w - 1) 
-                      - (adj.qfq_close / LAG(adj.qfq_close, 20) OVER w - 1)
+                       - (adj.qfq_close / LAG(adj.qfq_close, 20) OVER w - 1)
                  ELSE NULL END AS mom_12m_1m,
             -- 量价相关系数 (需要用子查询计算)
             NULL AS vol_price_corr
-        FROM dwd_daily d
-        LEFT JOIN dws_price_adj_daily adj ON adj.trade_date = d.trade_date AND adj.ts_code = d.ts_code
-        WHERE d.trade_date BETWEEN %s AND %s
+        FROM dws_price_adj_daily adj
+        WHERE adj.trade_date BETWEEN %s AND %s
         WINDOW 
-            w AS (PARTITION BY d.ts_code ORDER BY d.trade_date),
-            w250 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 249 PRECEDING AND CURRENT ROW)
+            w AS (PARTITION BY adj.ts_code ORDER BY adj.trade_date),
+            w250 AS (PARTITION BY adj.ts_code ORDER BY adj.trade_date ROWS BETWEEN 249 PRECEDING AND CURRENT ROW)
     ) mom
     WHERE mom.trade_date BETWEEN %s AND %s
 
@@ -155,7 +155,7 @@ def run_quality_extended(cursor, trade_date: int, end_date: int | None = None) -
             f.roe - LAG(f.roe, 4) OVER (PARTITION BY f.ts_code ORDER BY f.trade_date) AS roe_trend
         FROM dws_fina_pit_daily f
         LEFT JOIN dwd_fina_indicator fi ON fi.ts_code = f.ts_code AND fi.end_date = f.end_date
-        WHERE f.trade_date >= %s
+        WHERE f.trade_date >= %s AND f.trade_date <= %s
     ) base
     WHERE base.trade_date BETWEEN %s AND %s
 
@@ -166,7 +166,8 @@ def run_quality_extended(cursor, trade_date: int, end_date: int | None = None) -
         roe_trend = VALUES(roe_trend)
     """
     start_lookback = _get_lookback_date(cursor, trade_date, 400) # Need enough history for LAG(4)
-    cursor.execute(sql, (start_lookback, trade_date, end_date if end_date else trade_date))
+    ed = end_date if end_date else trade_date
+    cursor.execute(sql, (start_lookback, ed, trade_date, ed))
 
 
 def run_risk_factor(cursor, trade_date: int, end_date: int | None = None) -> None:
@@ -196,7 +197,7 @@ def run_risk_factor(cursor, trade_date: int, end_date: int | None = None) -> Non
             NULL AS var_5pct_60
         FROM dwd_daily d
         LEFT JOIN dws_price_adj_daily adj ON adj.trade_date = d.trade_date AND adj.ts_code = d.ts_code
-        WHERE d.trade_date >= %s
+        WHERE d.trade_date >= %s AND d.trade_date <= %s
         WINDOW w60 AS (PARTITION BY d.ts_code ORDER BY d.trade_date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)
     ) risk ON risk.trade_date = base.trade_date AND risk.ts_code = base.ts_code
     WHERE base.trade_date BETWEEN %s AND %s
@@ -209,4 +210,6 @@ def run_risk_factor(cursor, trade_date: int, end_date: int | None = None) -> Non
         ivol_20 = VALUES(ivol_20)
     """
     start_date = _get_lookback_date(cursor, trade_date, 100)
-    cursor.execute(sql, (start_date, trade_date))
+    ed = end_date if end_date else trade_date
+    cursor.execute(sql, (start_date, ed, trade_date, ed))
+

@@ -22,9 +22,8 @@ Run `crontab -e` in your terminal to edit cron jobs, and append the following li
 # Retry 3 times, delay 5 minutes between retries
 0 17 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/schedule/run_with_retry.py --retries 3 --delay 300 -- /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_1700.log 2>&1
 
-# 2. 20:00 Evening Enhancement (Features & Factors)
-# Retry 3 times, delay 5 minutes between retries
-0 20 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/schedule/run_with_retry.py --retries 3 --delay 300 -- /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_2000.log 2>&1
+# 2. 20:00 Evening Enhancement (Features & Factors + Integrity Check)
+0 20 * * 1-5 /Users/chenyiyun/PycharmProjects/AShareDataCenter/scripts/schedule/run_2000_task.sh
 
 # 3. 08:30 T+1 Morning Completion (Margin Data & Full ADS)
 # Usually reliable, less retry needed
