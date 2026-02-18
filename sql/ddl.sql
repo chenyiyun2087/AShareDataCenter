@@ -8,7 +8,7 @@ CREATE DATABASE IF NOT EXISTS tushare_stock
 USE tushare_stock;
 
 -- ========== 采集水位与运行日志 ==========
---采集采集水位表
+-- 采集采集水位表
 CREATE TABLE IF NOT EXISTS meta_etl_watermark (
   api_name VARCHAR(64) NOT NULL COMMENT '接口名称',
   water_mark INT NOT NULL COMMENT '当前水位(YYYYMMDD)',
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS meta_etl_watermark (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (api_name)
 ) ENGINE=InnoDB COMMENT='ETL采集水位表';
---ETL运行日志表
+-- ETL运行日志表
 CREATE TABLE IF NOT EXISTS meta_etl_run_log (
   id BIGINT NOT NULL AUTO_INCREMENT,
   api_name VARCHAR(64) NOT NULL COMMENT '接口名称',
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS meta_etl_run_log (
 ) ENGINE=InnoDB COMMENT='ETL运行日志表';
 
 -- ========== 维表 ==========
---股票维度表
+-- 股票维度表
 CREATE TABLE IF NOT EXISTS dim_stock (
   ts_code CHAR(9) NOT NULL COMMENT 'TS代码',
   symbol VARCHAR(10) NOT NULL COMMENT '股票代码',
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS dim_stock (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (ts_code)
 ) ENGINE=InnoDB COMMENT='股票基础信息表';
---交易日历表
+-- 交易日历表
 CREATE TABLE IF NOT EXISTS dim_trade_cal (
   exchange VARCHAR(8) NOT NULL COMMENT '交易所 SSE上交所 SZSE深交所',
   cal_date INT NOT NULL COMMENT '日历日期',
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS dim_trade_cal (
 ) ENGINE=InnoDB COMMENT='交易日历表';
 
 -- ========== ODS 原始表 ==========
---日频行情表
+-- 日频行情表
 CREATE TABLE IF NOT EXISTS ods_daily (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS ods_daily (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='日频行情原始表';
---日频指标表
+-- 日频指标表
 CREATE TABLE IF NOT EXISTS ods_daily_basic (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS ods_daily_basic (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='每日指标原始表';
---复权因子表
+-- 复权因子表
 CREATE TABLE IF NOT EXISTS ods_adj_factor (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS ods_adj_factor (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='复权因子表';
---财务指标表
+-- 财务指标表
 CREATE TABLE IF NOT EXISTS ods_fina_indicator (
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
   ann_date INT NOT NULL COMMENT '公告日期',
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS ods_fina_indicator (
 ) ENGINE=InnoDB COMMENT='财务指标原始表';
 
 -- ========== ODS 特色数据 ==========
---融资融券余额表
+-- 融资融券余额表
 CREATE TABLE IF NOT EXISTS ods_margin (
   trade_date INT NOT NULL COMMENT '交易日期',
   exchange_id VARCHAR(8) NOT NULL COMMENT '交易所代码',
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS ods_margin (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (trade_date, exchange_id)
 ) ENGINE=InnoDB COMMENT='融资融券交易汇总表';
---融资融券明细表
+-- 融资融券明细表
 CREATE TABLE IF NOT EXISTS ods_margin_detail (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT 'TS代码',
@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS ods_margin_detail (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_margin_detail_date (trade_date)
 ) ENGINE=InnoDB COMMENT='融资融券交易明细表';
---融资融券标的表
+-- 融资融券标的表
 CREATE TABLE IF NOT EXISTS ods_margin_target (
   ts_code CHAR(9) NOT NULL COMMENT '标的代码',
   mg_type VARCHAR(4) NOT NULL COMMENT '标的类型(B融资/S融券)',
@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS ods_margin_target (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (ts_code, mg_type, ann_date)
 ) ENGINE=InnoDB COMMENT='融资融券标的表';
---资金流向表
+-- 资金流向表
 CREATE TABLE IF NOT EXISTS ods_moneyflow (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS ods_moneyflow (
   KEY idx_moneyflow_date (trade_date)
 ) ENGINE=InnoDB COMMENT='个股资金流向表';
 
---个股资金流向表
+-- 个股资金流向表
 CREATE TABLE IF NOT EXISTS ods_moneyflow_ths (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS ods_moneyflow_ths (
   KEY idx_moneyflow_ths_date (trade_date)
 ) ENGINE=InnoDB COMMENT='个股资金流向表(同花顺)';
 
---每日筹码分布表
+-- 每日筹码分布表
 CREATE TABLE IF NOT EXISTS ods_cyq_chips (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS ods_cyq_chips (
   KEY idx_cyq_date (trade_date)
 ) ENGINE=InnoDB COMMENT='每日筹码分布表';
 
---每日筹码绩效表
+-- 每日筹码绩效表
 CREATE TABLE IF NOT EXISTS ods_cyq_perf (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS ods_cyq_perf (
   KEY idx_cyq_perf_date (trade_date)
 ) ENGINE=InnoDB COMMENT='每日筹码绩效表';
 
---股票因子表
+-- 股票因子表
 CREATE TABLE IF NOT EXISTS ods_stk_factor (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -373,7 +373,7 @@ CREATE TABLE IF NOT EXISTS ods_stk_factor (
   KEY idx_stk_factor_date (trade_date)
 ) ENGINE=InnoDB COMMENT='股票技术因子表(Pro版)';
 
---融资融券原始表
+-- 融资融券原始表
 CREATE TABLE IF NOT EXISTS ods_margin_raw (
   api_name VARCHAR(32) NOT NULL COMMENT 'API接口名称',
   trade_date INT NOT NULL COMMENT '交易日期',
@@ -385,7 +385,7 @@ CREATE TABLE IF NOT EXISTS ods_margin_raw (
   KEY idx_margin_date (trade_date)
 ) ENGINE=InnoDB COMMENT='融资融券原始JSON数据表';
 
---资金流向原始表
+-- 资金流向原始表
 CREATE TABLE IF NOT EXISTS ods_moneyflow_raw (
   api_name VARCHAR(32) NOT NULL COMMENT 'API接口名称',
   trade_date INT NOT NULL COMMENT '交易日期',
@@ -396,7 +396,7 @@ CREATE TABLE IF NOT EXISTS ods_moneyflow_raw (
   KEY idx_moneyflow_date (trade_date)
 ) ENGINE=InnoDB COMMENT='资金流向原始JSON数据表';
 
---筹码分布原始表
+-- 筹码分布原始表
 CREATE TABLE IF NOT EXISTS ods_cyq_raw (
   api_name VARCHAR(32) NOT NULL COMMENT 'API接口名称',
   trade_date INT NOT NULL COMMENT '交易日期',
@@ -419,7 +419,7 @@ CREATE TABLE IF NOT EXISTS ods_tech_score_raw (
 
 -- ========== DWD 日频事实表 ==========
 
---日线行情表
+-- 日线行情表
 CREATE TABLE IF NOT EXISTS dwd_daily (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -437,7 +437,7 @@ CREATE TABLE IF NOT EXISTS dwd_daily (
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='日频行情事实表';
 
---日线行情表
+-- 日线行情表
 CREATE TABLE IF NOT EXISTS dwd_daily_basic (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -462,7 +462,7 @@ CREATE TABLE IF NOT EXISTS dwd_daily_basic (
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='每日指标事实表';
 
---复权因子表
+-- 复权因子表
 CREATE TABLE IF NOT EXISTS dwd_adj_factor (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -472,7 +472,7 @@ CREATE TABLE IF NOT EXISTS dwd_adj_factor (
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='复权因子事实表';
 
---财务指标表
+-- 财务指标表
 CREATE TABLE IF NOT EXISTS dwd_fina_indicator (
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
   ann_date INT NOT NULL COMMENT '公告日期',
@@ -549,7 +549,7 @@ CREATE TABLE IF NOT EXISTS dwd_chip_stability (
 -- ========== DWS 主题层 ==========
 
 
---日线行情主题表
+-- 日线行情主题表
 CREATE TABLE IF NOT EXISTS dws_price_adj_daily (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -563,7 +563,7 @@ CREATE TABLE IF NOT EXISTS dws_price_adj_daily (
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='价格复权日频主题表';
 
---财务指标主题表
+-- 财务指标主题表
 CREATE TABLE IF NOT EXISTS dws_fina_pit_daily (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -715,7 +715,7 @@ CREATE TABLE IF NOT EXISTS dws_chip_score (
 ) ENGINE=InnoDB COMMENT='筹码评分表';
 
 -- ========== ADS 服务层 ==========
---股票日频因子服务表
+-- 股票日频因子服务表
 CREATE TABLE IF NOT EXISTS ads_features_stock_daily (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -738,7 +738,7 @@ CREATE TABLE IF NOT EXISTS ads_features_stock_daily (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='股票日频因子服务表';
---每日股票池
+-- 每日股票池
 CREATE TABLE IF NOT EXISTS ads_universe_daily (
   trade_date INT NOT NULL COMMENT '交易日期',
   ts_code CHAR(9) NOT NULL COMMENT '股票代码',
@@ -952,7 +952,7 @@ CREATE TABLE IF NOT EXISTS ods_sw_index_daily (
   low DECIMAL(20,4) NULL COMMENT '最低点位',
   high DECIMAL(20,4) NULL COMMENT '最高点位',
   close DECIMAL(20,4) NULL COMMENT '收盘点位',
-  change DECIMAL(20,4) NULL COMMENT '涨跌点',
+  `change` DECIMAL(20,4) NULL COMMENT '涨跌点',
   pct_change DECIMAL(12,6) NULL COMMENT '涨跌幅(%)',
   vol DECIMAL(20,4) NULL COMMENT '成交量(万股)',
   amount DECIMAL(20,4) NULL COMMENT '成交额(万元)',

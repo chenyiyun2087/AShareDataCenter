@@ -40,7 +40,7 @@ def _ensure_columns(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
     for col in columns:
         if col not in normalized.columns:
             normalized[col] = None
-    normalized = normalized.where(pd.notnull(normalized), None)
+    normalized = normalized.astype(object).where(pd.notnull(normalized), None)
     return normalized[list(columns)]
 
 
