@@ -868,3 +868,97 @@ CREATE TABLE IF NOT EXISTS ods_index_daily (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='指数日线表';
+
+
+-- 指数基础信息表
+CREATE TABLE IF NOT EXISTS ods_index_basic (
+  ts_code CHAR(9) NOT NULL COMMENT '指数代码',
+  name VARCHAR(128) NULL COMMENT '指数简称',
+  market VARCHAR(32) NULL COMMENT '交易所/市场',
+  publisher VARCHAR(128) NULL COMMENT '发布方',
+  category VARCHAR(64) NULL COMMENT '指数类别',
+  base_date INT NULL COMMENT '基日(YYYYMMDD)',
+  base_point DECIMAL(20,4) NULL COMMENT '基点',
+  list_date INT NULL COMMENT '发布日期(YYYYMMDD)',
+  fullname VARCHAR(255) NULL COMMENT '指数全称',
+  index_type VARCHAR(64) NULL COMMENT '指数风格类型',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (ts_code)
+) ENGINE=InnoDB COMMENT='A股指数基础信息';
+
+-- 指数成分股信息表
+CREATE TABLE IF NOT EXISTS ods_index_member (
+  index_code CHAR(9) NOT NULL COMMENT '指数代码',
+  con_code CHAR(9) NOT NULL COMMENT '成分股代码',
+  in_date INT NULL COMMENT '纳入日期(YYYYMMDD)',
+  out_date INT NULL COMMENT '剔除日期(YYYYMMDD)',
+  is_new CHAR(1) NULL COMMENT '是否最新成分(N最新/Y历史)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (index_code, con_code),
+  KEY idx_con_code (con_code)
+) ENGINE=InnoDB COMMENT='A股指数成分信息';
+
+-- 指数成分权重表
+CREATE TABLE IF NOT EXISTS ods_index_weight (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  index_code CHAR(9) NOT NULL COMMENT '指数代码',
+  con_code CHAR(9) NOT NULL COMMENT '成分股代码',
+  weight DECIMAL(12,6) NULL COMMENT '权重(%)',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, index_code, con_code),
+  KEY idx_index_date (index_code, trade_date),
+  KEY idx_con_date (con_code, trade_date)
+) ENGINE=InnoDB COMMENT='A股指数成分权重';
+
+-- 指数技术指标表（TuShare index_dailybasic）
+CREATE TABLE IF NOT EXISTS ods_index_tech_factor (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '指数代码',
+  turnover_rate DECIMAL(12,6) NULL COMMENT '换手率(%)',
+  pe DECIMAL(20,6) NULL COMMENT '市盈率',
+  pe_ttm DECIMAL(20,6) NULL COMMENT '市盈率TTM',
+  pb DECIMAL(20,6) NULL COMMENT '市净率',
+  total_mv DECIMAL(20,4) NULL COMMENT '总市值',
+  float_mv DECIMAL(20,4) NULL COMMENT '流通市值',
+  total_share DECIMAL(20,4) NULL COMMENT '总股本',
+  float_share DECIMAL(20,4) NULL COMMENT '流通股本',
+  free_share DECIMAL(20,4) NULL COMMENT '自由流通股本',
+  turnover_rate5 DECIMAL(12,6) NULL COMMENT '5日换手率',
+  turnover_rate10 DECIMAL(12,6) NULL COMMENT '10日换手率',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='指数技术因子信息';
+
+-- 申万行业指数分类信息表
+CREATE TABLE IF NOT EXISTS ods_sw_index_classify (
+  index_code CHAR(9) NOT NULL COMMENT '申万行业指数代码',
+  industry_name VARCHAR(128) NULL COMMENT '行业名称',
+  level VARCHAR(16) NULL COMMENT '行业级别',
+  industry_code VARCHAR(32) NULL COMMENT '行业编码',
+  is_pub CHAR(1) NULL COMMENT '是否发布',
+  parent_code VARCHAR(32) NULL COMMENT '父级行业编码',
+  src VARCHAR(32) NULL COMMENT '分类标准',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (index_code)
+) ENGINE=InnoDB COMMENT='申万行业指数分类';
+
+-- 申万行业指数日线表
+CREATE TABLE IF NOT EXISTS ods_sw_index_daily (
+  trade_date INT NOT NULL COMMENT '交易日期',
+  ts_code CHAR(9) NOT NULL COMMENT '申万行业指数代码',
+  name VARCHAR(128) NULL COMMENT '指数名称',
+  open DECIMAL(20,4) NULL COMMENT '开盘点位',
+  low DECIMAL(20,4) NULL COMMENT '最低点位',
+  high DECIMAL(20,4) NULL COMMENT '最高点位',
+  close DECIMAL(20,4) NULL COMMENT '收盘点位',
+  change DECIMAL(20,4) NULL COMMENT '涨跌点',
+  pct_change DECIMAL(12,6) NULL COMMENT '涨跌幅(%)',
+  vol DECIMAL(20,4) NULL COMMENT '成交量(万股)',
+  amount DECIMAL(20,4) NULL COMMENT '成交额(万元)',
+  pe DECIMAL(20,6) NULL COMMENT '市盈率',
+  pb DECIMAL(20,6) NULL COMMENT '市净率',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (trade_date, ts_code),
+  KEY idx_ts_date (ts_code, trade_date)
+) ENGINE=InnoDB COMMENT='申万行业指数日线';

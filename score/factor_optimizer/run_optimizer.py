@@ -3,7 +3,7 @@
 Usage:
     python -m score.factor_optimizer.run_optimizer
     python -m score.factor_optimizer.run_optimizer --start 20220101 --end 20251231
-    python -m score.factor_optimizer.run_optimizer --top-n 5 --holding-days 20
+    python -m score.factor_optimizer.run_optimizer --num-stocks 5 --holding-days 20 --initial-capital 1000000
 """
 from __future__ import annotations
 
@@ -25,8 +25,9 @@ def main():
     parser = argparse.ArgumentParser(description="Factor Combination Optimizer")
     parser.add_argument("--start", type=int, default=20220101, help="Backtest start date")
     parser.add_argument("--end", type=int, default=20251231, help="Backtest end date")
-    parser.add_argument("--top-n", type=int, default=5, help="Number of stocks to hold")
+    parser.add_argument("--num-stocks", "--top-n", dest="num_stocks", type=int, default=5, help="Number of stocks to hold")
     parser.add_argument("--holding-days", type=int, default=20, help="Rebalance period in days")
+    parser.add_argument("--initial-capital", type=float, default=1_000_000.0, help="Initial capital for strategy and backtest")
     parser.add_argument("--output", type=str, default=None, help="Output report file")
     parser.add_argument("--dry-run", action="store_true", help="Quick test with limited date range")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
@@ -48,8 +49,9 @@ def main():
     config = OptimizerConfig(
         backtest_start=args.start,
         backtest_end=args.end,
-        top_n=args.top_n,
+        num_stocks=args.num_stocks,
         holding_days=args.holding_days,
+        initial_capital=args.initial_capital,
     )
 
     if args.dry_run:
@@ -64,7 +66,8 @@ def main():
     logging.info("Factor Combination Optimizer")
     logging.info("=" * 60)
     logging.info(f"Period:       {config.backtest_start} -> {config.backtest_end}")
-    logging.info(f"Top N:        {config.top_n}")
+    logging.info(f"Num Stocks:   {config.num_stocks}")
+    logging.info(f"Init Capital: {config.initial_capital:,.2f}")
     logging.info(f"Holding Days: {config.holding_days}")
     logging.info(f"Benchmark:    {config.benchmark_code}")
     logging.info(f"Categories:   {CATEGORY_NAMES}")

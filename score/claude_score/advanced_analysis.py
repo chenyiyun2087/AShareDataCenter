@@ -41,10 +41,12 @@ class AdvancedAnalyzer:
         return pd.read_sql(text(sql), self.engine, params={"start_date": start_date, "end_date": end_date})
 
     def backtest_score_strategy(self, start_date: int, end_date: int, 
-                                top_n: int = 50, holding_days: int = 20,
+                                num_stocks: int = 50, holding_days: int = 20,
                                 commission: float = 0.0003,  # 佣金率 0.03%
                                 stamp_tax: float = 0.001,    # 印花税 0.1% (卖出)
-                                slippage: float = 0.001) -> pd.DataFrame:
+                                slippage: float = 0.001,
+                                initial_capital: float = 1_000_000.0,
+                                top_n: int | None = None) -> pd.DataFrame:
         """
         回测评分选股策略 (修正版)
         
@@ -55,10 +57,18 @@ class AdvancedAnalyzer:
         4. 加入交易成本 (佣金+印花税+滑点)
         5. 调仓日不计算当日涨跌幅 (开盘买入，收益从T+1开始)
         
-        策略逻辑：根据T-1日评分，在T日开盘买入top_n只非涨停股票，持有holding_days天
+        策略逻辑：根据T-1日评分，在T日开盘买入num_stocks只非涨停股票，持有holding_days天
         """
         logger.info(f"开始回测评分策略: {start_date} - {end_date}")
-        logger.info(f"参数: Top {top_n} 股票, 持有 {holding_days} 天")
+        if top_n is not None and top_n > 0:
+            num_stocks = top_n
+        if num_stocks <= 0:
+            raise ValueError("num_stocks must be > 0")
+        if initial_capital <= 0:
+            raise ValueError("initial_capital must be > 0")
+
+        logger.info(f"参数: 持仓股票数 {num_stocks}, 持有 {holding_days} 天")
+        logger.info(f"初始资金: {initial_capital:,.2f}")
         logger.info(f"交易成本: 佣金{commission*100:.3f}%, 印花税{stamp_tax*100:.2f}%, 滑点{slippage*100:.2f}%")
         
         # 1. 获取评分数据
@@ -108,7 +118,7 @@ class AdvancedAnalyzer:
             date_to_prev_scores[curr_date] = prev_scores
         
         current_portfolio = []
-        portfolio_value = 1.0
+        portfolio_value = float(initial_capital)
         daily_nav = []
         next_rebalance_idx = 1  # 从第2天开始(需要T-1评分)
         
@@ -135,7 +145,7 @@ class AdvancedAnalyzer:
                 
                 if not eligible.empty:
                     # 按T-1评分选股
-                    top_stocks = eligible.nlargest(top_n, 'total_score')['ts_code'].tolist()
+                    top_stocks = eligible.nlargest(num_stocks, 'total_score')['ts_code'].tolist()
                     
                     # 计算换手成本
                     old_portfolio = set(current_portfolio)
@@ -197,7 +207,7 @@ class AdvancedAnalyzer:
             df_results['max_nav'] = df_results['nav'].cummax()
             df_results['drawdown'] = (df_results['nav'] - df_results['max_nav']) / df_results['max_nav']
             
-            total_ret = df_results['nav'].iloc[-1] - 1
+            total_ret = (df_results['nav'].iloc[-1] / float(initial_capital)) - 1
             max_dd = df_results['drawdown'].min()
             
             # 年化收益 (简单估算)
