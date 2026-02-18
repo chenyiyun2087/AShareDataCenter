@@ -29,9 +29,10 @@ Run `crontab -e` in your terminal to edit cron jobs, and append the following li
 # Reliable execution, ensures all historical components are matched
 30 8 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/schedule/run_with_retry.py --retries 1 --delay 60 -- /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_0830.log 2>&1
 
-# 4. [Integrated] Index Suite Sync (A-share index + SW industry)
-# Now part of run_daily_pipeline.py. Manual run only if needed:
-# python scripts/sync/run_index_suite.py --config config/etl.ini --start-date 20100101 --end-date $(date +\%Y\%m\%d)
+
+# 4. 20:30 Index Suite Sync (A-share index + SW industry)
+# Add this only after local tests/checks pass
+30 20 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_index_suite.py --config config/etl.ini --start-date 20100101 --end-date $(date +\%Y\%m\%d) >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_index_suite.log 2>&1
 
 # ==============================================================================
 ```
