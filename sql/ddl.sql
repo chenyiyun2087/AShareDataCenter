@@ -962,3 +962,30 @@ CREATE TABLE IF NOT EXISTS ods_sw_index_daily (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='申万行业指数日线';
+
+
+-- 应用层：股票池管理（Web）
+CREATE TABLE IF NOT EXISTS app_stock_pool (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  pool_name VARCHAR(64) NOT NULL COMMENT '股票池名称',
+  pool_type VARCHAR(16) NOT NULL DEFAULT 'custom' COMMENT '类型(system/custom)',
+  is_system TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否系统内置池',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_pool_name (pool_name)
+) ENGINE=InnoDB COMMENT='股票池管理主表';
+
+CREATE TABLE IF NOT EXISTS app_stock_pool_member (
+  pool_id BIGINT NOT NULL COMMENT '股票池ID',
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (pool_id, ts_code),
+  KEY idx_ts_code (ts_code)
+) ENGINE=InnoDB COMMENT='股票池成分表';
+
+-- 初始化系统股票池
+INSERT INTO app_stock_pool (pool_name, pool_type, is_system)
+VALUES ('自选池', 'system', 1), ('B点股票池', 'system', 1)
+ON DUPLICATE KEY UPDATE updated_at=CURRENT_TIMESTAMP;

@@ -338,8 +338,6 @@ def api_stock_pools():
     try:
         with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
-                _ensure_stock_pool_tables(cursor)
-                _seed_system_pools(cursor)
 
                 if request.method == "POST":
                     pool_name = (payload.get("pool_name") or "").strip()
@@ -373,8 +371,6 @@ def api_stock_pool_update(pool_name: str):
     try:
         with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
-                _ensure_stock_pool_tables(cursor)
-                _seed_system_pools(cursor)
                 cursor.execute("SELECT id, is_system FROM app_stock_pool WHERE pool_name=%s", [pool_name])
                 row = cursor.fetchone()
                 if not row:
@@ -408,8 +404,6 @@ def api_stock_pool_stocks(pool_name: str):
     try:
         with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
-                _ensure_stock_pool_tables(cursor)
-                _seed_system_pools(cursor)
                 pool_id = _pool_id_by_name(cursor, pool_name)
                 if pool_id is None:
                     return _json_error("pool not found", 404)
