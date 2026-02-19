@@ -30,7 +30,7 @@ def handle_preflight():
         return None
     response = make_response("", 204)
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
@@ -39,7 +39,7 @@ def handle_preflight():
 def add_cors_headers(response):
     if request.path.startswith("/api/"):
         response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
@@ -214,6 +214,26 @@ ODS_TABLES: List[str] = [
 ]
 
 
+
+
+def _get_or_create_pool(cursor, pool_name: str, pool_type: str = "custom", is_system: int = 0) -> int:
+    cursor.execute(
+        """
+        INSERT INTO app_stock_pool (pool_name, pool_type, is_system)
+        VALUES (%s, %s, %s)
+        ON DUPLICATE KEY UPDATE updated_at=CURRENT_TIMESTAMP
+        """,
+        [pool_name, pool_type, is_system],
+    )
+    cursor.execute("SELECT id FROM app_stock_pool WHERE pool_name=%s", [pool_name])
+    return int(cursor.fetchone()[0])
+
+
+def _pool_id_by_name(cursor, pool_name: str) -> Optional[int]:
+    cursor.execute("SELECT id FROM app_stock_pool WHERE pool_name=%s", [pool_name])
+    row = cursor.fetchone()
+    return int(row[0]) if row else None
+
 def _fetch_ods_rows(
     table: str,
     page: int,
@@ -263,6 +283,124 @@ def index(path: str):
     if path and (DIST_DIR / path).is_file():
         return send_from_directory(DIST_DIR, path)
     return send_from_directory(DIST_DIR, "index.html")
+
+
+
+
+@app.route("/api/stock-pools", methods=["GET", "POST"])
+def api_stock_pools():
+    payload = _get_payload()
+    cfg = get_env_config()
+    try:
+        with get_mysql_session(cfg) as conn:
+            with conn.cursor() as cursor:
+
+                if request.method == "POST":
+                    pool_name = (payload.get("pool_name") or "").strip()
+                    if not pool_name:
+                        return _json_error("pool_name is required", 400)
+                    pool_id = _get_or_create_pool(cursor, pool_name, pool_type="custom", is_system=0)
+                    conn.commit()
+                    return jsonify({"message": "Pool created", "pool_id": pool_id})
+
+                cursor.execute(
+                    """
+                    SELECT p.id, p.pool_name, p.pool_type, p.is_system, COUNT(m.ts_code) AS stock_count
+                    FROM app_stock_pool p
+                    LEFT JOIN app_stock_pool_member m ON p.id = m.pool_id
+                    GROUP BY p.id, p.pool_name, p.pool_type, p.is_system
+                    ORDER BY p.is_system DESC, p.pool_name ASC
+                    """
+                )
+                rows = cursor.fetchall()
+                columns = [d[0] for d in cursor.description]
+                data = [dict(zip(columns, r)) for r in rows]
+                return jsonify({"data": data})
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+@app.route("/api/stock-pools/<pool_name>", methods=["PATCH", "DELETE"])
+def api_stock_pool_update(pool_name: str):
+    payload = _get_payload()
+    cfg = get_env_config()
+    try:
+        with get_mysql_session(cfg) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT id, is_system FROM app_stock_pool WHERE pool_name=%s", [pool_name])
+                row = cursor.fetchone()
+                if not row:
+                    return _json_error("pool not found", 404)
+                pool_id, is_system = int(row[0]), int(row[1])
+
+                if request.method == "PATCH":
+                    new_name = (payload.get("new_name") or "").strip()
+                    if not new_name:
+                        return _json_error("new_name is required", 400)
+                    if is_system == 1:
+                        return _json_error("system pool cannot be renamed", 400)
+                    cursor.execute("UPDATE app_stock_pool SET pool_name=%s WHERE id=%s", [new_name, pool_id])
+                    conn.commit()
+                    return jsonify({"message": "Pool renamed"})
+
+                if is_system == 1:
+                    return _json_error("system pool cannot be deleted", 400)
+                cursor.execute("DELETE FROM app_stock_pool_member WHERE pool_id=%s", [pool_id])
+                cursor.execute("DELETE FROM app_stock_pool WHERE id=%s", [pool_id])
+                conn.commit()
+                return jsonify({"message": "Pool deleted"})
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+@app.route("/api/stock-pools/<pool_name>/stocks", methods=["GET", "POST", "DELETE"])
+def api_stock_pool_stocks(pool_name: str):
+    payload = _get_payload()
+    cfg = get_env_config()
+    try:
+        with get_mysql_session(cfg) as conn:
+            with conn.cursor() as cursor:
+                pool_id = _pool_id_by_name(cursor, pool_name)
+                if pool_id is None:
+                    return _json_error("pool not found", 404)
+
+                if request.method == "GET":
+                    cursor.execute(
+                        """
+                        SELECT m.ts_code, ds.name
+                        FROM app_stock_pool_member m
+                        LEFT JOIN dim_stock ds ON m.ts_code = ds.ts_code
+                        WHERE m.pool_id=%s
+                        ORDER BY m.ts_code
+                        """,
+                        [pool_id],
+                    )
+                    rows = cursor.fetchall()
+                    columns = [d[0] for d in cursor.description]
+                    data = [dict(zip(columns, r)) for r in rows]
+                    return jsonify({"data": data})
+
+                ts_code = (payload.get("ts_code") or "").strip().upper()
+                if not ts_code:
+                    return _json_error("ts_code is required", 400)
+
+                if request.method == "POST":
+                    cursor.execute(
+                        """
+                        INSERT INTO app_stock_pool_member (pool_id, ts_code)
+                        VALUES (%s, %s)
+                        ON DUPLICATE KEY UPDATE updated_at=CURRENT_TIMESTAMP
+                        """,
+                        [pool_id, ts_code],
+                    )
+                    conn.commit()
+                    return jsonify({"message": "Stock added"})
+
+                cursor.execute("DELETE FROM app_stock_pool_member WHERE pool_id=%s AND ts_code=%s", [pool_id, ts_code])
+                conn.commit()
+                return jsonify({"message": "Stock removed"})
+    except Exception as exc:
+        return _json_error(str(exc))
 
 
 @app.route("/api/ods/status", methods=["GET"])

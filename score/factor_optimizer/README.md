@@ -117,8 +117,9 @@ score/factor_optimizer/
 .venv/bin/python -m score.factor_optimizer \
     --start 20220101 \
     --end 20251231 \
-    --top-n 5 \
-    --holding-days 20
+    --num-stocks 5 \
+    --holding-days 20 \
+    --initial-capital 1000000
 
 # 详细日志
 .venv/bin/python -m score.factor_optimizer -v
@@ -213,7 +214,8 @@ score/factor_optimizer/
 | 参数项 | 默认值 | 说明 |
 |:---|:---|:---|
 | **回测区间** | 2022-01-01 ~ 2025-12-31 | 覆盖牛熊周期 |
-| **持仓数量** | Top 5 | 集中持仓策略 |
+| **持仓数量** | 5 (`num_stocks`) | 集中持仓策略 |
+| **初始资金** | 1,000,000 | 回测与策略初始投资金额 |
 | **调仓周期** | 20 个交易日 | 月度调仓 |
 | **基准指数** | 000300.SH (沪深300) | 暂替代未同步的 CSI 500 |
 | **交易佣金** | 0.03% | 双边 |

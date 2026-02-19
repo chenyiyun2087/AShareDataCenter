@@ -40,6 +40,14 @@
 - 网络超时重试：指数退避（例如 2s、4s、8s）。
 - 失败记录：写入 `meta_etl_run_log`，并更新 `meta_etl_watermark`。
 
+
+### 2.3 指数专题增量（新增）
+1. 执行 `scripts/sync/run_index_suite.py --start-date <T-5> --end-date <T>` 同步以下数据集：
+   - 目标指数：上证指数、深证成指、沪深300、中证500、上证50、科创50、标普中国A股1500、富时中国A50、深证100、创业板指。
+   - 数据内容：指数基础信息、成分股、成分权重、指数日线、指数技术因子（`index_dailybasic`）、申万行业分类、申万行业日线。
+2. 执行 `scripts/check/check_index_suite_status.py --start-date <T-5> --end-date <T> --fail-on-empty`。
+3. 检查通过后纳入调度计划（建议在晚间 20:30 与 ODS 特征任务串行执行）。
+
 ## 3. DWS/ADS 产出顺序
 
 1. **dws_price_adj_daily**
