@@ -196,6 +196,50 @@ def _serialize_job(job) -> dict:
     }
 
 
+SYSTEM_POOL_NAMES = {"自选池", "B点股票池"}
+
+
+def _ensure_stock_pool_tables(cursor) -> None:
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_stock_pool (
+            id BIGINT NOT NULL AUTO_INCREMENT,
+            pool_name VARCHAR(64) NOT NULL,
+            pool_type VARCHAR(16) NOT NULL DEFAULT 'custom',
+            is_system TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uk_pool_name (pool_name)
+        ) ENGINE=InnoDB
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_stock_pool_member (
+            pool_id BIGINT NOT NULL,
+            ts_code CHAR(9) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (pool_id, ts_code),
+            KEY idx_ts_code (ts_code)
+        ) ENGINE=InnoDB
+        """
+    )
+
+
+def _seed_system_pools(cursor) -> None:
+    for pool_name in SYSTEM_POOL_NAMES:
+        cursor.execute(
+            """
+            INSERT INTO app_stock_pool (pool_name, pool_type, is_system)
+            VALUES (%s, 'system', 1)
+            ON DUPLICATE KEY UPDATE updated_at=CURRENT_TIMESTAMP
+            """,
+            [pool_name],
+        )
+
+
 @app.route("/api/jobs", methods=["GET"])
 def api_list_jobs():
     jobs = scheduler.get_jobs()

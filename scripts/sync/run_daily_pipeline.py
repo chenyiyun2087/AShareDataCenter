@@ -237,6 +237,24 @@ def main() -> None:
             args.debug,
             stats
         )
+        
+        # 3b. Index suite incremental
+        _run_step(
+            "Index suite incremental",
+            base_cmd
+            + [
+                get_script("scripts/sync/run_index_suite.py"),
+                "--start-date",
+                str(start_date),
+                "--end-date",
+                str(end_date),
+            ]
+            + base_config
+            + ["--token", token],
+            args.debug,
+            stats
+        )
+
         _run_step(
             "Check ODS features",
             base_cmd
@@ -249,6 +267,21 @@ def main() -> None:
                 "--fail-on-missing",
             ]
             + lenient_config,
+            args.debug,
+            stats
+        )
+        
+        _run_step(
+            "Check index suite",
+            base_cmd
+            + [
+                get_script("scripts/check/check_index_suite_status.py"),
+                "--start-date",
+                str(start_date),
+                "--end-date",
+                str(end_date),
+            ]
+            + base_config,
             args.debug,
             stats
         )
