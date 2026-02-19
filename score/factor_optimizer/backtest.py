@@ -105,7 +105,7 @@ def run_backtest(
         date_to_prev_scores[curr] = prev_scores
 
     current_portfolio: List[str] = []
-    portfolio_value = 1.0
+    portfolio_value = float(config.initial_capital)
     daily_nav = []
     next_rebalance_idx = 1
     total_turnover_events = 0
@@ -135,7 +135,7 @@ def run_backtest(
             ]
 
             if not eligible.empty:
-                top_stocks = eligible.nlargest(config.top_n, "total_score")["ts_code"].tolist()
+                top_stocks = eligible.nlargest(config.num_stocks, "total_score")["ts_code"].tolist()
 
                 old_set = set(current_portfolio)
                 new_set = set(top_stocks)

@@ -214,55 +214,6 @@ ODS_TABLES: List[str] = [
 ]
 
 
-def _fetch_ods_rows(
-    table: str,
-    page: int,
-    search_ts_code: Optional[str],
-    search_trade_date: Optional[int],
-    page_size: int = 50,
-) -> Tuple[List[str], List[tuple], int]:
-    if table not in ODS_TABLES:
-        raise ValueError("Invalid ODS table selection.")
-    cfg = get_env_config()
-    where_clauses = []
-    params: List[object] = []
-    if search_ts_code:
-        where_clauses.append("ts_code LIKE %s")
-        params.append(f"%{search_ts_code}%")
-    if search_trade_date:
-        where_clauses.append("trade_date = %s")
-        params.append(search_trade_date)
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-    offset = (page - 1) * page_size
-    with get_mysql_session(cfg) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(f"SELECT COUNT(*) FROM {table} {where_sql}", params)
-            total = cursor.fetchone()[0]
-            cursor.execute(
-                f"SELECT * FROM {table} {where_sql} "
-                "ORDER BY trade_date DESC, ts_code DESC "
-                "LIMIT %s OFFSET %s",
-                [*params, page_size, offset],
-            )
-            rows = cursor.fetchall()
-            columns = [desc[0] for desc in cursor.description]
-    return columns, rows, total
-
-
-@app.route("/api/readme", methods=["GET"])
-def api_readme():
-    try:
-        return send_from_directory(ROOT_DIR, "README.md")
-    except Exception as exc:
-        return _json_error(str(exc))
-
-
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def index(path: str):
-    if path and (DIST_DIR / path).is_file():
-        return send_from_directory(DIST_DIR, path)
-    return send_from_directory(DIST_DIR, "index.html")
 
 
 @app.route("/api/ods/status", methods=["GET"])
