@@ -240,8 +240,9 @@ def query_top_stocks(trade_date: int, top_n: int = 50, **db_config):
 if __name__ == '__main__':
     '''
     策略回测 (--backtest)： 回测过去 3 个月评分策略的表现（Top 10 等权重持有）。
-    python score/claude_score/score_query.py --backtest --top N         选股数量 (默认10)
-    --hold N        持仓天数 (默认20)
+    python score/claude_score/score_query.py --backtest --num-stocks N  持仓股票数 (默认10)
+    --initial-capital X  初始资金 (默认1000000)
+    --hold N        目标平均持仓天数 (默认20)
     --commission X  佣金率 (默认0.0003=0.03%)
     --stamp-tax X   印花税 (默认0.001=0.1%)
     --slippage X    滑点 (默认0.001=0.1%)
@@ -263,10 +264,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='股票评分查询与分析工具')
     parser.add_argument('codes', nargs='*', help='股票代码列表 (e.g. 000001.SZ)')
     parser.add_argument('--date', type=int, default=20260206, help='交易日期 (YYYYMMDD)')
-    parser.add_argument('--top', type=int, default=10, help='显示Top N股票')
+    parser.add_argument('--top', type=int, default=10, help='显示Top N股票(查询/展示)')
     parser.add_argument('--industry', action='store_true', help='执行行业对比分析')
     parser.add_argument('--backtest', action='store_true', help='执行策略回测')
     parser.add_argument('--days', type=int, default=90, help='回测天数 (默认90天)')
+    parser.add_argument('--num-stocks', '--top-n', dest='num_stocks', type=int, default=10, help='回测持仓股票数 (默认10)')
+    parser.add_argument('--initial-capital', type=float, default=1_000_000.0, help='回测初始资金 (默认1000000)')
     parser.add_argument('--hold', type=int, default=20, help='持仓天数 (默认20天)')
     parser.add_argument('--commission', type=float, default=0.0003, help='佣金率 (默认0.03%%)')
     parser.add_argument('--stamp-tax', type=float, default=0.001, help='印花税 (默认0.1%%)')
@@ -307,11 +310,12 @@ if __name__ == '__main__':
         analyzer.backtest_score_strategy(
             start_date=start_date, 
             end_date=trade_date,
-            top_n=args.top,
+            num_stocks=args.num_stocks,
             holding_days=args.hold,
             commission=args.commission,
             stamp_tax=getattr(args, 'stamp_tax'),
-            slippage=args.slippage
+            slippage=args.slippage,
+            initial_capital=args.initial_capital
         )
         sys.exit(0)
         
