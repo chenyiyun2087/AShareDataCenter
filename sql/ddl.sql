@@ -976,7 +976,7 @@ CREATE TABLE IF NOT EXISTS ods_sw_index_daily (
   low DECIMAL(20,4) NULL COMMENT '最低点位',
   high DECIMAL(20,4) NULL COMMENT '最高点位',
   close DECIMAL(20,4) NULL COMMENT '收盘点位',
-  `change` DECIMAL(20,4) NULL COMMENT '涨跌点',
+  change DECIMAL(20,4) NULL COMMENT '涨跌点',
   pct_change DECIMAL(12,6) NULL COMMENT '涨跌幅(%)',
   vol DECIMAL(20,4) NULL COMMENT '成交量(万股)',
   amount DECIMAL(20,4) NULL COMMENT '成交额(万元)',
@@ -986,3 +986,5 @@ CREATE TABLE IF NOT EXISTS ods_sw_index_daily (
   PRIMARY KEY (trade_date, ts_code),
   KEY idx_ts_date (ts_code, trade_date)
 ) ENGINE=InnoDB COMMENT='申万行业指数日线';
+
+

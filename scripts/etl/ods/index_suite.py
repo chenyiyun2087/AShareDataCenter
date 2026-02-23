@@ -40,7 +40,7 @@ def _ensure_columns(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
     for col in columns:
         if col not in normalized.columns:
             normalized[col] = None
-    normalized = normalized.astype(object).where(pd.notnull(normalized), None)
+    normalized = normalized.where(pd.notnull(normalized), None)
     return normalized[list(columns)]
 
 
@@ -70,21 +70,11 @@ def fetch_index_weight(
     end_date: int,
 ) -> pd.DataFrame:
     rows: List[pd.DataFrame] = []
-    # Fetch weights in yearly chunks to avoid TuShare API single-request limits
-    start_yr = start_date // 10000
-    end_yr = end_date // 10000
-    
     for code in index_codes:
-        for yr in range(start_yr, end_yr + 1):
-            yr_start = max(start_date, yr * 10000 + 101)
-            yr_end = min(end_date, yr * 10000 + 1231)
-            if yr_start > yr_end:
-                continue
-            
-            limiter.wait()
-            df = pro.index_weight(index_code=code, start_date=str(yr_start), end_date=str(yr_end))
-            if df is not None and not df.empty:
-                rows.append(df)
+        limiter.wait()
+        df = pro.index_weight(index_code=code, start_date=str(start_date), end_date=str(end_date))
+        if df is not None and not df.empty:
+            rows.append(df)
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
