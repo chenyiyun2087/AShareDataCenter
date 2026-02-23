@@ -129,6 +129,30 @@ CREATE TABLE IF NOT EXISTS ods_fina_indicator (
   KEY idx_ts_ann (ts_code, ann_date)
 ) ENGINE=InnoDB COMMENT='财务指标原始表';
 
+-- 分红送股表
+CREATE TABLE IF NOT EXISTS ods_dividend (
+  ts_code CHAR(9) NOT NULL COMMENT '股票代码',
+  ann_date INT NULL COMMENT '公告日期',
+  end_date INT NULL COMMENT '分红日期',
+  div_proc VARCHAR(16) NULL COMMENT '实施进度',
+  stk_div DECIMAL(20,4) NULL COMMENT '送股比例',
+  stk_chl_div DECIMAL(20,4) NULL COMMENT '转增比例',
+  stk_img_div DECIMAL(20,4) NULL COMMENT '派息比例',
+  cash_div DECIMAL(20,4) NULL COMMENT '每股派息(税前)',
+  cash_div_tax DECIMAL(20,4) NULL COMMENT '每股派息(税后)',
+  record_date INT NULL COMMENT '股权登记日',
+  ex_date INT NULL COMMENT '除权除息日',
+  pay_date INT NULL COMMENT '派息日',
+  div_listdate INT NULL COMMENT '红股上市日',
+  imp_ann_date INT NULL COMMENT '实施公告日',
+  base_date INT NULL COMMENT '基准日',
+  base_share DECIMAL(20,4) NULL COMMENT '基准股本',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY idx_unique (ts_code, ann_date, div_proc, cash_div_tax),
+  KEY idx_ex_date (ex_date),
+  KEY idx_record_date (record_date)
+) ENGINE=InnoDB COMMENT='分红送股原始表';
+
 -- ========== ODS 特色数据 ==========
 -- 融资融券余额表
 CREATE TABLE IF NOT EXISTS ods_margin (

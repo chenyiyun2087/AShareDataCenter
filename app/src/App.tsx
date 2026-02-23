@@ -4,6 +4,7 @@ import { Dashboard } from '@/sections/Dashboard';
 import { ScheduledTasks } from '@/sections/ScheduledTasks';
 import { TaskHistory } from '@/sections/TaskHistory';
 import { DataBrowser } from '@/sections/DataBrowser';
+import NetworkConsole from '@/pages/NetworkConsole';
 
 import Pipeline from '@/pages/jobs/Pipeline';
 import Scheduling from '@/pages/jobs/Scheduling';
@@ -42,13 +43,17 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<MainLayout />}>
-          <Route index element={
+          <Route index element={<NetworkConsole />} />
+
+          <Route path="overview" element={
             <div className="space-y-6">
               <h1 className="text-3xl font-bold tracking-tight">平台首页</h1>
               <Dashboard />
               <DataBrowser />
             </div>
           } />
+
+          <Route path="console/network" element={<NetworkConsole />} />
 
           <Route path="jobs">
             <Route index element={<Navigate to="/jobs/pipeline" replace />} />

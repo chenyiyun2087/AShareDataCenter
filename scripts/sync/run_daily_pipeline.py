@@ -190,6 +190,17 @@ def main() -> None:
             args.debug,
             stats
         )
+
+        _run_step(
+            "ODS dividend incremental",
+            base_cmd
+            + [get_script("scripts/sync/run_ods.py"), "--dividend"]
+            + ["--rate-limit", str(rate_limit)]
+            + base_config
+            + ["--token", token],
+            args.debug,
+            stats
+        )
         lenient_config = base_config + (["--ignore-today"] if args.lenient else [])
 
         _run_step(
@@ -286,7 +297,22 @@ def main() -> None:
             stats
         )
 
-        if args.fina_start and args.fina_end:
+        # Financial data: default to checking last 7 days if not specified
+        # This catches new announcements (ann_date)
+        fina_start = args.fina_start
+        fina_end = args.fina_end
+        if not fina_start:
+             # Look back 7 days default
+             from datetime import datetime, timedelta
+             try:
+                 end_dt = datetime.strptime(str(end_date), "%Y%m%d")
+                 start_dt = end_dt - timedelta(days=7)
+                 fina_start = int(start_dt.strftime("%Y%m%d"))
+                 fina_end = end_date
+             except ValueError:
+                 print(f"Warning: could not parse end_date {end_date}, skipping auto-fina sync")
+
+        if fina_start and fina_end:
             _run_step(
                 "ODS fina incremental",
                 base_cmd
@@ -295,9 +321,9 @@ def main() -> None:
                     "--mode",
                     "incremental",
                     "--fina-start",
-                    str(args.fina_start),
+                    str(fina_start),
                     "--fina-end",
-                    str(args.fina_end),
+                    str(fina_end),
                     "--rate-limit",
                     str(rate_limit),
                 ]

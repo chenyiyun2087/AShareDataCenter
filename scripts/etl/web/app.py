@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import os
 import subprocess
 import sys
 import threading
@@ -11,8 +13,16 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
-from .. import ads, base, dwd, dws, ods
-from ..base.runtime import get_env_config, get_mysql_session
+try:
+    from .. import ads, base, dwd, dws, ods
+    from ..base.runtime import get_env_config, get_mysql_session
+except ImportError:
+    # Allow running this file directly: `python scripts/etl/web/app.py run ...`
+    scripts_dir = Path(__file__).resolve().parents[2]
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from etl import ads, base, dwd, dws, ods
+    from etl.base.runtime import get_env_config, get_mysql_session
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DIST_DIR = ROOT_DIR / "app" / "dist"
@@ -213,6 +223,71 @@ ODS_TABLES: List[str] = [
     "ods_stk_factor",
 ]
 
+INTEGRITY_TABLES: Dict[str, Tuple[str, str]] = {
+    "ods_count": ("ods_daily", "trade_date"),
+    "dwd_count": ("dwd_daily_basic", "trade_date"),
+    "dws_count": ("dws_momentum_score", "trade_date"),
+    "ads_count": ("ads_features_stock_daily", "trade_date"),
+}
+
+MAX_INTEGRITY_WINDOW = 120
+
+
+def _parse_int_date(value: Optional[str]) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    cleaned = str(value).replace("-", "").strip()
+    if len(cleaned) != 8 or not cleaned.isdigit():
+        raise ValueError(f"Invalid date: {value}")
+    return int(cleaned)
+
+
+def _list_trade_dates_for_integrity(
+    cursor,
+    start_date: Optional[int],
+    end_date: Optional[int],
+    limit: int,
+) -> List[int]:
+    clauses = ["exchange=%s", "is_open=1"]
+    params: List[object] = ["SSE"]
+    if start_date is not None:
+        clauses.append("cal_date >= %s")
+        params.append(start_date)
+    if end_date is not None:
+        clauses.append("cal_date <= %s")
+        params.append(end_date)
+
+    where_sql = " AND ".join(clauses)
+    sql = (
+        "SELECT cal_date FROM dim_trade_cal "
+        f"WHERE {where_sql} "
+        "ORDER BY cal_date DESC LIMIT %s"
+    )
+    cursor.execute(sql, [*params, limit])
+    rows = cursor.fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def _fetch_table_counts_by_dates(
+    cursor,
+    table: str,
+    date_column: str,
+    trade_dates: List[int],
+) -> Dict[int, int]:
+    if not trade_dates:
+        return {}
+    placeholders = ",".join(["%s"] * len(trade_dates))
+    sql = (
+        f"SELECT {date_column}, COUNT(*) FROM {table} "
+        f"WHERE {date_column} IN ({placeholders}) "
+        f"GROUP BY {date_column}"
+    )
+    try:
+        cursor.execute(sql, trade_dates)
+    except Exception:
+        return {}
+    return {int(row[0]): int(row[1]) for row in cursor.fetchall()}
+
 
 def _fetch_ods_rows(
     table: str,
@@ -402,6 +477,63 @@ def api_task_history():
                 }
             )
         return jsonify({"data": data})
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+@app.route("/api/checks/data", methods=["GET"])
+def api_checks_data():
+    try:
+        start_date = _parse_int_date(request.args.get("start_date"))
+        end_date = _parse_int_date(request.args.get("end_date"))
+        limit = int(request.args.get("limit", 14))
+        limit = max(1, min(limit, MAX_INTEGRITY_WINDOW))
+
+        if start_date and end_date and start_date > end_date:
+            return _json_error("start_date must be less than or equal to end_date.", 400)
+
+        cfg = get_env_config()
+        with get_mysql_session(cfg) as conn:
+            with conn.cursor() as cursor:
+                trade_dates = _list_trade_dates_for_integrity(cursor, start_date, end_date, limit)
+                if not trade_dates:
+                    return jsonify({"data": []})
+
+                counts_map: Dict[str, Dict[int, int]] = {}
+                for key, (table, date_column) in INTEGRITY_TABLES.items():
+                    counts_map[key] = _fetch_table_counts_by_dates(cursor, table, date_column, trade_dates)
+
+                data = []
+                for trade_date in trade_dates:
+                    ods_count = counts_map["ods_count"].get(trade_date, 0)
+                    dwd_count = counts_map["dwd_count"].get(trade_date, 0)
+                    dws_count = counts_map["dws_count"].get(trade_date, 0)
+                    ads_count = counts_map["ads_count"].get(trade_date, 0)
+                    missing_layers = []
+                    if ods_count <= 0:
+                        missing_layers.append("ODS")
+                    if dwd_count <= 0:
+                        missing_layers.append("DWD")
+                    if dws_count <= 0:
+                        missing_layers.append("DWS")
+                    if ads_count <= 0:
+                        missing_layers.append("ADS")
+
+                    data.append(
+                        {
+                            "trade_date": trade_date,
+                            "ods_count": ods_count,
+                            "dwd_count": dwd_count,
+                            "dws_count": dws_count,
+                            "ads_count": ads_count,
+                            "healthy": len(missing_layers) == 0,
+                            "missing_layers": missing_layers,
+                        }
+                    )
+
+        return jsonify({"data": data})
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
     except Exception as exc:
         return _json_error(str(exc))
 
@@ -850,3 +982,39 @@ def serve(path):
         return send_from_directory(DIST_DIR, path)
     else:
         return send_from_directory(DIST_DIR, "index.html")
+
+
+def _resolve_config_path(config_arg: Optional[str]) -> Optional[Path]:
+    if not config_arg:
+        return None
+    config_path = Path(config_arg).expanduser()
+    if config_path.is_absolute():
+        return config_path
+    cwd_path = (Path.cwd() / config_path).resolve()
+    if cwd_path.exists():
+        return cwd_path
+    return (ROOT_DIR / config_path).resolve()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="启动 AShareDataCenter Web 控制台")
+    parser.add_argument("command", nargs="?", default="run", choices=["run"], help="启动命令")
+    parser.add_argument("--host", default="0.0.0.0", help="绑定地址，默认 0.0.0.0")
+    parser.add_argument("--port", type=int, default=5999, help="端口，默认 5999")
+    parser.add_argument("--config", default=str(ROOT_DIR / "config" / "etl.ini"), help="配置文件路径")
+    parser.add_argument("--debug", action="store_true", help="开启 Flask debug")
+    args = parser.parse_args()
+
+    config_path = _resolve_config_path(args.config)
+    if config_path and config_path.exists():
+        os.environ["ETL_CONFIG_PATH"] = str(config_path)
+        print(f"Using ETL config: {config_path}")
+    elif args.config:
+        print(f"Warning: config file not found: {config_path}")
+
+    print(f"Starting web console at http://{args.host}:{args.port}")
+    app.run(host=args.host, port=args.port, debug=args.debug)
+
+
+if __name__ == "__main__":
+    main()

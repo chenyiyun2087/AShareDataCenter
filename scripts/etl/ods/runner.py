@@ -110,6 +110,29 @@ def fetch_fina_indicator(
     )
 
 
+def fetch_balancesheet(
+    pro: ts.pro_api,
+    limiter: RateLimiter,
+    ts_code: str,
+    start_date: int,
+    end_date: int,
+):
+    limiter.wait()
+    return call_with_retry(
+        lambda: pro.balancesheet(
+            ts_code=ts_code,
+            start_date=str(start_date),
+            end_date=str(end_date),
+            fields="ts_code,ann_date,end_date,total_assets,total_hldr_eqy_exc_min_int",
+        )
+    )
+
+
+def fetch_dividend(pro: ts.pro_api, limiter: RateLimiter, ts_code: str):
+    limiter.wait()
+    return call_with_retry(lambda: pro.dividend(ts_code=ts_code))
+
+
 def load_ods_daily(cursor, df) -> None:
     data_columns = [
         "trade_date",
@@ -356,6 +379,67 @@ def load_ods_fina_indicator(cursor, df) -> None:
     upsert_rows(cursor, "ods_fina_indicator", columns, rows)
 
 
+def load_ods_dividend(cursor, df) -> None:
+    if df is None or df.empty:
+        return
+    columns = [
+        "ts_code",
+        "ann_date",
+        "end_date",
+        "div_proc",
+        "stk_div",
+        "stk_chl_div",
+        "stk_img_div",
+        "cash_div",
+        "cash_div_tax",
+        "record_date",
+        "ex_date",
+        "pay_date",
+        "div_listdate",
+        "imp_ann_date",
+        "base_date",
+        "base_share",
+    ]
+    df = df.copy()
+
+    # Map possible TuShare column names to our DB schema
+    mapping = {
+        "stk_co_rate": "stk_chl_div",
+        "stk_bo_rate": "stk_img_div",
+    }
+    for old_col, new_col in mapping.items():
+        if old_col in df.columns and (new_col not in df.columns or df[new_col].isnull().all()):
+            df[new_col] = df[old_col]
+
+    # Ensure all columns exist in the dataframe before records conversion
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
+
+    # Handle NaNs
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+
+    # Ensure date columns are safe for MySQL
+    date_cols = [
+        "ann_date",
+        "end_date",
+        "record_date",
+        "ex_date",
+        "pay_date",
+        "div_listdate",
+        "imp_ann_date",
+        "base_date",
+    ]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int).replace(0, None)
+
+    # Skip 0 dividend rows if needed, but here we just upsert what TuShare gives
+    rows = to_records(df, columns)
+    upsert_rows(cursor, "ods_dividend", columns, rows)
+
+
 def fetch_index_daily_range(pro: ts.pro_api, limiter: RateLimiter, ts_code: str, start_date: int, end_date: int):
     """Fetch index daily data for a specific index code and date range."""
     limiter.wait()
@@ -562,6 +646,7 @@ def run_fina_incremental(
     start_date: int,
     end_date: int,
     rate_limit: int = DEFAULT_RATE_LIMIT,
+    limit_count: Optional[int] = None,
 ) -> None:
     cfg = get_env_config()
     limiter = RateLimiter(rate_limit)
@@ -575,19 +660,103 @@ def run_fina_incremental(
             with conn.cursor() as cursor:
                 cursor.execute("SELECT ts_code FROM dim_stock ORDER BY ts_code")
                 ts_codes = [row[0] for row in cursor.fetchall()]
+
+            if limit_count:
+                ts_codes = ts_codes[:limit_count]
+
             total_codes = len(ts_codes)
             logger.info("ODS fina indicator load: %s ts_code items to process", total_codes)
 
             for index, ts_code in enumerate(ts_codes, start=1):
                 log_progress("ODS fina indicator load", index, total_codes)
                 with conn.cursor() as cursor:
-                    df = fetch_fina_indicator(pro, limiter, ts_code, start_date, end_date)
-                    load_ods_fina_indicator(cursor, df)
+                    fina_df = fetch_fina_indicator(pro, limiter, ts_code, start_date, end_date)
+                    bs_df = fetch_balancesheet(pro, limiter, ts_code, start_date, end_date)
+
+                    if fina_df is not None and not fina_df.empty:
+                        if bs_df is not None and not bs_df.empty:
+                            # Merge asset/equity from bs_df into fina_df
+                            bs_df = bs_df.rename(columns={"total_hldr_eqy_exc_min_int": "total_hldr_eqy"})
+                            # Ensure date types match for merging
+                            for df in (fina_df, bs_df):
+                                for col in ("ann_date", "end_date"):
+                                    if col in df.columns:
+                                        df[col] = df[col].astype(str).str.replace(".0", "", regex=False)
+
+                            # Identify columns to select from BS
+                            bs_cols = ["ts_code", "ann_date", "end_date"]
+                            for col in ("total_assets", "total_hldr_eqy"):
+                                if col in bs_df.columns:
+                                    bs_cols.append(col)
+
+                            combined = fina_df.merge(
+                                bs_df[bs_cols],
+                                on=["ts_code", "ann_date", "end_date"],
+                                how="left",
+                                suffixes=("", "_bs"),
+                            )
+
+                            # Fill missing from BS if columns exist
+                            for col in ("total_assets", "total_hldr_eqy"):
+                                col_bs = f"{col}_bs"
+                                if col_bs in combined.columns:
+                                    combined[col] = combined[col].fillna(combined[col_bs])
+                            load_ods_fina_indicator(cursor, combined)
+                        else:
+                            load_ods_fina_indicator(cursor, fina_df)
+                    elif bs_df is not None and not bs_df.empty:
+                        # Even if indicator API fails, we can partially fill the row from BS
+                        bs_df = bs_df.rename(columns={"total_hldr_eqy_exc_min_int": "total_hldr_eqy"})
+                        load_ods_fina_indicator(cursor, bs_df)
+
                     conn.commit()
 
             with conn.cursor() as cursor:
                 update_watermark(cursor, "ods_fina_indicator", end_date, "SUCCESS")
                 conn.commit()
+
+            with conn.cursor() as cursor:
+                log_run_end(cursor, run_id, "SUCCESS")
+                conn.commit()
+        except Exception as exc:
+            with conn.cursor() as cursor:
+                log_run_end(cursor, run_id, "FAILED", str(exc))
+                conn.commit()
+            raise
+
+
+def run_dividend_incremental(
+    token: str,
+    rate_limit: int = DEFAULT_RATE_LIMIT,
+    limit_count: Optional[int] = None,
+) -> None:
+    cfg = get_env_config()
+    limiter = RateLimiter(rate_limit)
+    pro = ts.pro_api(token)
+
+    with get_mysql_session(cfg) as conn:
+        with conn.cursor() as cursor:
+            run_id = log_run_start(cursor, "ods_dividend", "incremental")
+            conn.commit()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT ts_code FROM dim_stock ORDER BY ts_code")
+                ts_codes = [row[0] for row in cursor.fetchall()]
+            if limit_count:
+                ts_codes = ts_codes[:limit_count]
+
+            total_codes = len(ts_codes)
+            logger.info("ODS dividend load: %s ts_code items to process", total_codes)
+
+            for index, ts_code in enumerate(ts_codes, start=1):
+                if index % 100 == 0 or index == 1:
+                    log_progress("ODS dividend load", index, total_codes)
+                with conn.cursor() as cursor:
+                    df = fetch_dividend(pro, limiter, ts_code)
+                    load_ods_dividend(cursor, df)
+                    if index % 200 == 0:
+                        conn.commit()
+            conn.commit()
 
             with conn.cursor() as cursor:
                 log_run_end(cursor, run_id, "SUCCESS")

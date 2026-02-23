@@ -505,3 +505,267 @@ To automate this year-by-year execution, use the provided batch script with requ
    # 查看进度
    tail -f logs/manual_sync.log
    ```
+
+## Daily Pipeline Verification Checklist
+
+To ensure the daily data pipeline is running correctly and data is up-to-date, perform the following checks:
+
+### 1. Check Overall Pipeline Status
+Monitors the execution logs for the latest run status of each component.
+```bash
+python scripts/check/check_pipeline_status.py --config config/etl.ini
+```
+*Expected Output*: Should show `SUCCESS` for `ods_daily`, `ods_dividend`, `ods_fina_indicator`, and other key tasks for the current date.
+
+### 2. Check Data Freshness (Layer by Layer)
+Verifies that the latest `trade_date` in each layer matches the expected market date.
+```bash
+python scripts/check/check_data_status.py --config config/etl.ini
+```
+*Expected Output*: All layers (ODS, DWD, DWS, ADS) should show the latest trading date.
+
+### 3. Verify Specific Components
+
+#### Financial Data (Assets & Equity)
+Confirm that critical financial fields (Total Assets, Shareholder Equity) are being populated (via Balance Sheet fallback).
+```bash
+# Check for nulls in recent entries (should be empty or very low count)
+mysql -u root -p$MYSQL_PASSWORD -e "USE tushare_stock; SELECT count(*) FROM ods_fina_indicator WHERE ann_date >= 20240101 AND total_assets IS NULL;"
+```
+
+#### Dividend Data
+Verify that the `ods_dividend` table is populated and growing.
+```bash
+mysql -u root -p$MYSQL_PASSWORD -e "USE tushare_stock; SELECT count(*) FROM ods_dividend;"
+```
+
+#### Index Data
+Ensure A-share indices and SW industries are up-to-date.
+```bash
+python scripts/check/check_index_suite_status.py --config config/etl.ini --fail-on-empty
+```
+
+### 4. Manual Trigger (Troubleshooting)
+If any step fails or is missing, you can manually trigger the specific component or the entire pipeline in broad mode:
+
+```bash
+# Run full daily pipeline (lenient mode for partial data)
+python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient --token $TUSHARE_TOKEN
+
+# Run specific component (e.g., Dividend Sync)
+python scripts/sync/run_ods.py --dividend --config config/etl.ini
+```
+
+---
+
+## DWS和ADS数据评分逻辑详解
+
+### 整体架构
+
+项目采用分层数仓架构：**ODS → DWD → DWS → ADS**
+
+- **DWS（Data Warehouse Summary）**：主题数据层，包含6大维度的评分体系，满分100分
+- **ADS（Application Data Service）**：应用服务层，综合DWS各维度评分，提供最终的应用层排序
+
+---
+
+## DWS层评分体系（Claude Score）
+
+### 1. 动量评分（25分）- `dws_momentum_score`
+
+基于多时间维度的收益率、资金量能和动量指标的组合，判断股票的上涨动能。
+
+| 指标 | 分值 | 判断标准 |
+|------|------|--------|
+| 5日收益评分 | 0-3分 | >10% → 3分 \| >5% → 2分 \| >0% → 1分 |
+| 20日收益评分 | 0-2分 | >15% → 2分 \| >5% → 1分 |
+| 60日收益评分 | 0-3分 | >30% → 3分 \| >10% → 2分 \| >0% → 1分 |
+| 量比评分 | 0-4分 | >1.5 → 4分 \| >1.2 → 3分 \| >1.0 → 2分 \| 其他 → 1分 |
+| 换手率评分 | 0-4分 | >10% → 4分 \| >5% → 3分 \| >2% → 2分 \| 其他 → 1分 |
+| MTM动量指标 | 0-5分 | >1.0 → 5分 \| >0.5 → 4分 \| >0.2 → 3分 \| >0 → 2分 \| >-0.5 → 1分 |
+| MTMMA交叉信号 | 0-4分 | 金叉+多头 → 4分 \| 金叉 → 3分 \| 双多头 → 2分 \| 接近零轴 → 1分 |
+
+**实现位置**：[scripts/etl/dws/scoring.py](scripts/etl/dws/scoring.py) - `_run_momentum_score()`
+
+---
+
+### 2. 价值评分（20分）- `dws_value_score`
+
+低估值是价值投资的核心。PE越低、PB越接近破净对应分数越高。
+
+| 指标 | 分值 | 判断标准 |
+|------|------|--------|
+| PE评分 | 0-7分 | PE < 15 → 7分 \| <25 → 5分 \| <40 → 3分 \| <60 → 1分 |
+| PB评分 | 0-7分 | PB < 1.0（破净） → 7分 \| <2.0 → 6分 \| <3.0 → 4分 \| <5.0 → 2分 |
+| PS评分 | 0-6分 | PS < 1.0 → 6分 \| <2.0 → 5分 \| <3.0 → 3分 \| <5.0 → 1分 |
+
+**实现位置**：[scripts/etl/dws/scoring.py](scripts/etl/dws/scoring.py) - `_run_value_score()`
+
+---
+
+### 3. 质量评分（20分）- `dws_quality_score`
+
+衡量企业的盈利能力和财务健康度。高ROE、高毛利率、低负债是优质公司的标志。
+
+| 指标 | 分值 | 判断标准 |
+|------|------|--------|
+| ROE评分 | 0-8分 | 年化ROE > 20% → 8分 \| >15% → 6分 \| >10% → 4分 \| >5% → 2分 |
+| 毛利率评分 | 0-6分 | >50% → 6分 \| >30% → 5分 \| >20% → 3分 \| >10% → 1分 |
+| 负债率评分 | 0-6分 | 资产负债率 < 30% → 6分 \| <50% → 5分 \| <70% → 3分 \| ≥70% → 1分 |
+
+**实现位置**：[scripts/etl/dws/scoring.py](scripts/etl/dws/scoring.py) - `_run_quality_score()`
+
+---
+
+### 4. 技术评分（15分）- `dws_technical_score`
+
+使用多个技术指标的组合，判断股票的短期技术形态和超买超卖状态。
+
+| 指标 | 分值 | 判断标准 |
+|------|------|--------|
+| MACD评分 | 0-4分 | MACD>0 & DIF>DEA → 4分 \| MACD>0 → 2分 \| DIF>DEA → 1分 |
+| KDJ评分 | 0-3分 | KDJ < 20（超卖） → 3分 \| 40-60 → 2分 \| >80（超买） → 0分 |
+| RSI评分 | 0-3分 | RSI < 30（超卖） → 3分 \| 40-60 → 2分 \| >70（超买） → 0分 |
+| CCI评分 | 0-3分 | CCI > 100（强势） → 3分 \| 0-100 → 2分 \| <-100（超卖） → 2分 |
+| BIAS评分 | 0-2分 | BIAS < -3（超卖） → 2分 \| -1-1（正常） → 1分 \| >5（过热） → 0分 |
+
+**实现位置**：[scripts/etl/dws/scoring.py](scripts/etl/dws/scoring.py) - `_run_technical_score()`
+
+---
+
+### 5. 资金评分（10分）- `dws_capital_score`
+
+主力资金和机构资金的净流入情况，判断股票的实际资金支持力度。
+
+| 指标 | 分值 | 判断标准 |
+|------|------|--------|
+| 特大单净流（1亿+） | 0-5分 | 净买入 > 1亿 → 5分 \| >5000万 → 4分 \| >1000万 → 2分 \| >0 → 1分 |
+| 大单净流（5000万+） | 0-3分 | 净买入 > 5000万 → 3分 \| >2000万 → 2分 \| >0 → 1分 |
+| 融资融券评分 | 0-2分 | 融资净买入 > 融资余额 2% → 2分 \| >0.5% → 1.5分 \| >0% → 1分 |
+
+**实现位置**：[scripts/etl/dws/scoring.py](scripts/etl/dws/scoring.py) - `_run_capital_score()`
+
+---
+
+### 6. 筹码评分（10分）- `dws_chip_score`
+
+分析股票的成本分布。深度套牢（获利比低）可能预示反转机会；突破成本具有强支撑。
+
+| 指标 | 分值 | 判断标准 |
+|------|------|--------|
+| 获利比例评分 | 0-6分 | 获利比 < 10%（深度套牢） → 6分 \| <30% → 5分 \| 40-60% → 3分 \| >90% → 1分 |
+| 成本偏离评分 | 0-4分 | 现价 > 成本 10% → 4分 \| >5% → 3分 \| >0% → 2分 |
+
+**实现位置**：[scripts/etl/dws/scoring.py](scripts/etl/dws/scoring.py) - `_run_chip_score()`
+
+---
+
+## ADS层综合评分
+
+### 综合评分表（`ads_stock_score_daily`）
+
+使用**百分位排名（Percentile Rank）** 归一化，对标的进行每日排序：
+
+| 维度 | 权重 | 指标构成 |
+|------|------|--------|
+| **技术评分** | 40% | HMA斜率 + RSI合理区间 + BOLL波幅 |
+| **资金评分** | 25% | 主力净流入比 + 成交量价格关联度 |
+| **情绪评分** | 20% | 融资买入强度 + 换手率波动 |
+| **筹码评分** | 15% | 获利比例合理度 + 成本突破 |
+
+### 计算方法
+
+```
+每个维度先用 PERCENT_RANK() 在同一交易日的所有股票中进行百分位排名（0-100）
+
+然后加权求和：
+总分 = 技术评分×0.4 + 资金评分×0.25 + 情绪评分×0.2 + 筹码评分×0.15
+
+最终生成当日排名（RANK() OVER PARTITION BY trade_date）
+```
+
+**实现位置**：[scripts/etl/ads/runner.py](scripts/etl/ads/runner.py) - `_run_stock_score()`
+
+---
+
+## 数据流架构图
+
+```
+ODS (原始数据)
+    └─> DWD (明细数据) 
+            ├─> dwd_daily (行情明细)
+            ├─> dwd_daily_basic (估值基础)
+            ├─> dwd_fina_indicator (财务明细)
+            ├─> dwd_margin_sentiment (融资情绪)
+            └─> ods_moneyflow (资金流向)
+                    │
+                    └─> DWS (主题评分层)
+                            ├─> dws_price_adj_daily (复权收益)
+                            ├─> dws_fina_pit_daily (财务PIT快照)
+                            ├─> dws_momentum_score (动量25分)
+                            ├─> dws_value_score (价值20分)
+                            ├─> dws_quality_score (质量20分)
+                            ├─> dws_technical_score (技术15分)
+                            ├─> dws_capital_score (资金10分)
+                            └─> dws_chip_score (筹码10分)
+                                    └─> ADS (应用服务层)
+                                            ├─> ads_features_stock_daily (特征表)
+                                            ├─> ads_universe_daily (股票池)
+                                            └─> ads_stock_score_daily (最终排序)
+```
+
+---
+
+## 评分体系特点
+
+1. **多维度组合**：6个维度共100分，覆盖技术面、基本面、资金面、筹码面
+2. **动态权重**：ADS层使用百分位排名，每日根据整体市场情况动态调整相对排名
+3. **PIT快照**：财务数据采用Point-In-Time快照方式，确保财务数据的时间一致性
+4. **归一化处理**：避免市值偏差，使用比率和百分位而非绝对值
+5. **反向指标**：某些指标（如获利比低、负债低）体现反转机会，增加策略多样性
+6. **实时更新**：支持全量模式和增量模式，每日自动更新评分数据
+
+---
+
+## 运行评分计算
+
+### DWS评分计算
+
+```bash
+# 全量初始化 (较耗时)
+python scripts/sync/run_dws.py --mode full --start-date 20100101
+
+# 增量更新 (推荐)
+python scripts/sync/run_dws.py --mode incremental
+
+# 指定日期范围
+python scripts/sync/run_dws.py --mode incremental --start-date 20240101 --end-date 20240331
+```
+
+### ADS综合评分
+
+```bash
+# 全量初始化
+python scripts/sync/run_ads.py --mode full --start-date 20100101
+
+# 增量更新 (推荐)
+python scripts/sync/run_ads.py --mode incremental
+
+# 指定日期范围
+python scripts/sync/run_ads.py --mode incremental --start-date 20240101 --end-date 20240331
+```
+
+---
+
+## 关键实现文件
+
+| 功能 | 文件路径 |
+|------|--------|
+| DWS评分计算 | [scripts/etl/dws/scoring.py](scripts/etl/dws/scoring.py) |
+| DWS主题表计算 | [scripts/etl/dws/runner.py](scripts/etl/dws/runner.py) |
+| DWS增强因子 | [scripts/etl/dws/enhanced_factors.py](scripts/etl/dws/enhanced_factors.py) |
+| ADS综合评分 | [scripts/etl/ads/runner.py](scripts/etl/ads/runner.py) |
+| DWS运行脚本 | [scripts/sync/run_dws.py](scripts/sync/run_dws.py) |
+| ADS运行脚本 | [scripts/sync/run_ads.py](scripts/sync/run_ads.py) |
+| SQL转换逻辑 | [sql/transform.sql](sql/transform.sql) |
+| 表结构定义 | [sql/ddl.sql](sql/ddl.sql) |
