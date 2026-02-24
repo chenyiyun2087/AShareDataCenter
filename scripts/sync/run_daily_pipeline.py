@@ -332,18 +332,19 @@ def main() -> None:
                 args.debug,
                 stats
             )
+            check_fina_cmd = base_cmd + [
+                get_script("scripts/check/check_data_status.py"),
+                "--categories",
+                "financial",
+                "--fail-on-stale",
+            ]
+            if fina_end is not None:
+                check_fina_cmd += ["--min-fina-ann-date", str(fina_end)]
+            check_fina_cmd += lenient_config
+
             _run_step(
                 "Check fina status",
-                base_cmd
-                + [
-                    get_script("scripts/check/check_data_status.py"),
-                    "--categories",
-                    "financial",
-                    "--fail-on-stale",
-                    "--min-fina-ann-date",
-                    str(args.fina_end),
-                ]
-                + lenient_config,
+                check_fina_cmd,
                 args.debug,
                 stats
             )

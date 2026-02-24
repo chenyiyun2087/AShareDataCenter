@@ -122,6 +122,9 @@ CREATE TABLE IF NOT EXISTS ods_fina_indicator (
   debt_to_assets DECIMAL(12,6) NULL COMMENT '资产负债率',
   netprofit_margin DECIMAL(12,6) NULL COMMENT '净利率',
   op_income DECIMAL(20,4) NULL COMMENT '营业收入',
+  -- 同比增速（营业收入/净利润），按原始命名保留以供下游视图使用
+  or_yoy DECIMAL(12,6) NULL COMMENT '营业收入同比',
+  netprofit_yoy DECIMAL(12,6) NULL COMMENT '净利润同比',
   total_assets DECIMAL(20,4) NULL COMMENT '总资产',
   total_hldr_eqy DECIMAL(20,4) NULL COMMENT '股东权益',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

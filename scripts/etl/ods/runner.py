@@ -103,10 +103,18 @@ def fetch_fina_indicator(
     ts_code: str,
     start_date: int,
     end_date: int,
+    fields: Optional[str] = None,
 ):
     limiter.wait()
+    kwargs = {
+        "ts_code": ts_code,
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+    }
+    if fields:
+        kwargs["fields"] = fields
     return call_with_retry(
-        lambda: pro.fina_indicator(ts_code=ts_code, start_date=str(start_date), end_date=str(end_date))
+        lambda: pro.fina_indicator(**kwargs)
     )
 
 
@@ -345,6 +353,61 @@ def load_ods_adj_factor(cursor, df) -> None:
     upsert_rows(cursor, "ods_adj_factor", columns, rows)
 
 
+def _coerce_fina_dates(df: pd.DataFrame) -> pd.DataFrame:
+    for col in ("ann_date", "end_date"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+def _sanitize_ratio_column(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.loc[df[col].abs() > 999999.999999, col] = None
+    return df
+
+
+def _fill_or_yoy_from_op_income(df: pd.DataFrame) -> pd.DataFrame:
+    if "or_yoy" not in df.columns or "op_income" not in df.columns:
+        return df
+    if df["or_yoy"].notnull().all():
+        return df
+
+    tmp = df[["ts_code", "end_date", "op_income"]].copy()
+    tmp["end_date"] = pd.to_numeric(tmp["end_date"], errors="coerce")
+    tmp["op_income"] = pd.to_numeric(tmp["op_income"], errors="coerce")
+    tmp = tmp[tmp["ts_code"].notnull() & tmp["end_date"].notnull()]
+    if tmp.empty:
+        return df
+
+    tmp["prev_end_date"] = tmp["end_date"] - 10000
+    prev = tmp[["ts_code", "end_date", "op_income"]].rename(
+        columns={"end_date": "prev_end_date", "op_income": "op_income_prev"}
+    )
+    merged = tmp.merge(prev, on=["ts_code", "prev_end_date"], how="left")
+    mask = (
+        merged["op_income_prev"].notnull()
+        & (merged["op_income_prev"] != 0)
+        & merged["op_income"].notnull()
+    )
+    merged["or_yoy_calc"] = None
+    merged.loc[mask, "or_yoy_calc"] = (
+        (merged.loc[mask, "op_income"] - merged.loc[mask, "op_income_prev"])
+        / merged.loc[mask, "op_income_prev"]
+    )
+    lookup = (
+        merged[["ts_code", "end_date", "or_yoy_calc"]]
+        .dropna(subset=["or_yoy_calc"])
+        .drop_duplicates(subset=["ts_code", "end_date"])
+    )
+    if lookup.empty:
+        return df
+
+    df = df.merge(lookup, on=["ts_code", "end_date"], how="left")
+    df["or_yoy"] = df["or_yoy"].fillna(df["or_yoy_calc"])
+    return df.drop(columns=["or_yoy_calc"], errors="ignore")
+
+
 def load_ods_fina_indicator(cursor, df) -> None:
     columns = [
         "ts_code",
@@ -356,6 +419,8 @@ def load_ods_fina_indicator(cursor, df) -> None:
         "debt_to_assets",
         "netprofit_margin",
         "op_income",
+        "or_yoy",
+        "netprofit_yoy",
         "total_assets",
         "total_hldr_eqy",
     ]
@@ -368,13 +433,44 @@ def load_ods_fina_indicator(cursor, df) -> None:
     for col in columns:
         if col not in df.columns:
             df[col] = None
-    df = df.copy()
-    for col in ("grossprofit_margin", "netprofit_margin"):
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-        df.loc[df[col].abs() > 999999.999999, col] = None
+    df = _coerce_fina_dates(df)
+    for col in ("grossprofit_margin", "netprofit_margin", "or_yoy", "netprofit_yoy"):
+        df = _sanitize_ratio_column(df, col)
+    if "op_income" in df.columns:
+        df["op_income"] = pd.to_numeric(df["op_income"], errors="coerce")
+
+    df = df[df["ann_date"].notnull() & df["end_date"].notnull() & df["ts_code"].notnull()]
+    df = _fill_or_yoy_from_op_income(df)
+
     df = df.where(pd.notnull(df), None)
     df = df.replace({pd.NA: None, float("nan"): None})
+
+    rows = to_records(df, columns)
+    upsert_rows(cursor, "ods_fina_indicator", columns, rows)
+
+
+def load_ods_fina_yoy(cursor, df) -> None:
+    columns = ["ts_code", "ann_date", "end_date", "or_yoy", "netprofit_yoy"]
+    if df is None or df.empty:
+        return
+
+    df = df.copy()
+    df.columns = [str(col).strip() for col in df.columns]
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
+
+    df = _coerce_fina_dates(df)
+    for col in ("or_yoy", "netprofit_yoy"):
+        df = _sanitize_ratio_column(df, col)
+    if "op_income" in df.columns:
+        df["op_income"] = pd.to_numeric(df["op_income"], errors="coerce")
+        df = _fill_or_yoy_from_op_income(df)
+
     df = df[df["ann_date"].notnull() & df["end_date"].notnull() & df["ts_code"].notnull()]
+    df = df.where(pd.notnull(df), None)
+    df = df.replace({pd.NA: None, float("nan"): None})
+
     rows = to_records(df, columns)
     upsert_rows(cursor, "ods_fina_indicator", columns, rows)
 
@@ -647,10 +743,19 @@ def run_fina_incremental(
     end_date: int,
     rate_limit: int = DEFAULT_RATE_LIMIT,
     limit_count: Optional[int] = None,
+    include_balancesheet: bool = True,
+    yoy_only: bool = False,
+    only_missing_yoy: bool = False,
+    commit_every: int = 1,
+    progress_every: int = 1,
+    continue_on_error: bool = False,
+    active_ts_only: bool = False,
 ) -> None:
     cfg = get_env_config()
     limiter = RateLimiter(rate_limit)
     pro = ts.pro_api(token)
+    commit_every = max(1, commit_every)
+    progress_every = max(1, progress_every)
 
     with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
@@ -658,7 +763,31 @@ def run_fina_incremental(
             conn.commit()
         try:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT ts_code FROM dim_stock ORDER BY ts_code")
+                if only_missing_yoy:
+                    cursor.execute(
+                        """
+                        SELECT DISTINCT ts_code
+                        FROM ods_fina_indicator
+                        WHERE ann_date BETWEEN %s AND %s
+                          AND (or_yoy IS NULL OR netprofit_yoy IS NULL)
+                        ORDER BY ts_code
+                        """,
+                        (start_date, end_date),
+                    )
+                else:
+                    if active_ts_only:
+                        cursor.execute(
+                            """
+                            SELECT ts_code
+                            FROM dim_stock
+                            WHERE (list_date IS NULL OR list_date <= %s)
+                              AND (delist_date IS NULL OR delist_date = 0 OR delist_date >= %s)
+                            ORDER BY ts_code
+                            """,
+                            (end_date, start_date),
+                        )
+                    else:
+                        cursor.execute("SELECT ts_code FROM dim_stock ORDER BY ts_code")
                 ts_codes = [row[0] for row in cursor.fetchall()]
 
             if limit_count:
@@ -666,61 +795,110 @@ def run_fina_incremental(
 
             total_codes = len(ts_codes)
             logger.info("ODS fina indicator load: %s ts_code items to process", total_codes)
+            if total_codes == 0:
+                logger.info("No ts_code to process for range %s - %s", start_date, end_date)
+
+            failed_codes: list[str] = []
+            fina_fields = None
+            if yoy_only:
+                # Keep payload small in YoY-only backfill mode.
+                fina_fields = "ts_code,ann_date,end_date,op_income,or_yoy,netprofit_yoy"
 
             for index, ts_code in enumerate(ts_codes, start=1):
-                log_progress("ODS fina indicator load", index, total_codes)
-                with conn.cursor() as cursor:
-                    fina_df = fetch_fina_indicator(pro, limiter, ts_code, start_date, end_date)
-                    bs_df = fetch_balancesheet(pro, limiter, ts_code, start_date, end_date)
-
-                    if fina_df is not None and not fina_df.empty:
-                        if bs_df is not None and not bs_df.empty:
-                            # Merge asset/equity from bs_df into fina_df
-                            bs_df = bs_df.rename(columns={"total_hldr_eqy_exc_min_int": "total_hldr_eqy"})
-                            # Ensure date types match for merging
-                            for df in (fina_df, bs_df):
-                                for col in ("ann_date", "end_date"):
-                                    if col in df.columns:
-                                        df[col] = df[col].astype(str).str.replace(".0", "", regex=False)
-
-                            # Identify columns to select from BS
-                            bs_cols = ["ts_code", "ann_date", "end_date"]
-                            for col in ("total_assets", "total_hldr_eqy"):
-                                if col in bs_df.columns:
-                                    bs_cols.append(col)
-
-                            combined = fina_df.merge(
-                                bs_df[bs_cols],
-                                on=["ts_code", "ann_date", "end_date"],
-                                how="left",
-                                suffixes=("", "_bs"),
-                            )
-
-                            # Fill missing from BS if columns exist
-                            for col in ("total_assets", "total_hldr_eqy"):
-                                col_bs = f"{col}_bs"
-                                if col_bs in combined.columns:
-                                    combined[col] = combined[col].fillna(combined[col_bs])
-                            load_ods_fina_indicator(cursor, combined)
+                if index == 1 or index == total_codes or (index % progress_every == 0):
+                    log_progress("ODS fina indicator load", index, total_codes)
+                try:
+                    with conn.cursor() as cursor:
+                        fina_df = fetch_fina_indicator(
+                            pro,
+                            limiter,
+                            ts_code,
+                            start_date,
+                            end_date,
+                            fields=fina_fields,
+                        )
+                        if yoy_only:
+                            if fina_df is not None and not fina_df.empty:
+                                load_ods_fina_yoy(cursor, fina_df)
                         else:
-                            load_ods_fina_indicator(cursor, fina_df)
-                    elif bs_df is not None and not bs_df.empty:
-                        # Even if indicator API fails, we can partially fill the row from BS
-                        bs_df = bs_df.rename(columns={"total_hldr_eqy_exc_min_int": "total_hldr_eqy"})
-                        load_ods_fina_indicator(cursor, bs_df)
+                            bs_df = None
+                            if include_balancesheet:
+                                bs_df = fetch_balancesheet(pro, limiter, ts_code, start_date, end_date)
 
-                    conn.commit()
+                            if fina_df is not None and not fina_df.empty:
+                                if bs_df is not None and not bs_df.empty:
+                                    # Merge asset/equity from bs_df into fina_df
+                                    bs_df = bs_df.rename(columns={"total_hldr_eqy_exc_min_int": "total_hldr_eqy"})
+                                    # Ensure date types match for merging
+                                    for df in (fina_df, bs_df):
+                                        for col in ("ann_date", "end_date"):
+                                            if col in df.columns:
+                                                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+                                    # Identify columns to select from BS
+                                    bs_cols = ["ts_code", "ann_date", "end_date"]
+                                    for col in ("total_assets", "total_hldr_eqy"):
+                                        if col in bs_df.columns:
+                                            bs_cols.append(col)
+
+                                    combined = fina_df.merge(
+                                        bs_df[bs_cols],
+                                        on=["ts_code", "ann_date", "end_date"],
+                                        how="left",
+                                        suffixes=("", "_bs"),
+                                    )
+
+                                    # Fill missing from BS if columns exist
+                                    for col in ("total_assets", "total_hldr_eqy"):
+                                        col_bs = f"{col}_bs"
+                                        if col_bs in combined.columns:
+                                            combined[col] = combined[col].fillna(combined[col_bs])
+                                    load_ods_fina_indicator(cursor, combined)
+                                else:
+                                    load_ods_fina_indicator(cursor, fina_df)
+                            elif bs_df is not None and not bs_df.empty:
+                                # Even if indicator API fails, we can partially fill the row from BS
+                                bs_df = bs_df.rename(columns={"total_hldr_eqy_exc_min_int": "total_hldr_eqy"})
+                                load_ods_fina_indicator(cursor, bs_df)
+
+                        if index % commit_every == 0:
+                            conn.commit()
+                except Exception as exc:
+                    conn.rollback()
+                    failed_codes.append(ts_code)
+                    logger.exception("Failed processing ts_code=%s: %s", ts_code, exc)
+                    if not continue_on_error:
+                        raise
+
+            conn.commit()
+
+            if failed_codes:
+                sample = ", ".join(failed_codes[:20])
+                logger.warning(
+                    "ODS fina indicator had %s failed ts_code(s). sample=%s%s",
+                    len(failed_codes),
+                    sample,
+                    " ..." if len(failed_codes) > 20 else "",
+                )
+                if len(failed_codes) >= total_codes:
+                    raise RuntimeError("all ts_code requests failed for ods_fina_indicator")
 
             with conn.cursor() as cursor:
                 update_watermark(cursor, "ods_fina_indicator", end_date, "SUCCESS")
                 conn.commit()
 
             with conn.cursor() as cursor:
-                log_run_end(cursor, run_id, "SUCCESS")
+                log_run_end(
+                    cursor,
+                    run_id,
+                    "SUCCESS",
+                    request_count=total_codes,
+                    fail_count=len(failed_codes),
+                )
                 conn.commit()
         except Exception as exc:
             with conn.cursor() as cursor:
-                log_run_end(cursor, run_id, "FAILED", str(exc))
+                log_run_end(cursor, run_id, "FAILED", str(exc), fail_count=1)
                 conn.commit()
             raise
 
