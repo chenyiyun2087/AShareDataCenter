@@ -18,16 +18,16 @@ Run `crontab -e` in your terminal to edit cron jobs, and append the following li
 # AShare Data Center Pipeline Schedule
 # ==============================================================================
 
-# 1. 17:00 Afternoon Sync (Basic Data)
+# 1. 17:00 Afternoon Core Pipeline
 # Retry 3 times, delay 5 minutes between retries
-0 17 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/schedule/run_with_retry.py --retries 3 --delay 300 -- /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_1700.log 2>&1
+0 17 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/schedule/run_with_retry.py --retries 3 --delay 300 -- /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_1700_pipeline.py --config config/etl.ini --lenient >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_1700.log 2>&1
 
-# 2. 20:00 Evening Enhancement (Features & Factors + Integrity Check)
-0 20 * * 1-5 /Users/chenyiyun/PycharmProjects/AShareDataCenter/scripts/schedule/run_2000_task.sh
+# 2. 20:00 Evening Enhancement Pipeline (dividend + fina + integrity)
+0 20 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/schedule/run_with_retry.py --retries 3 --delay 300 -- /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_2000_pipeline.py --config config/etl.ini --lenient >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_2000.log 2>&1
 
-# 3. 08:30 T+1 Morning Completion (Margin Data, Indices & Full ADS)
+# 3. 08:30 T+1 Morning Completion (Margin-first)
 # Reliable execution, ensures all historical components are matched
-30 8 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/schedule/run_with_retry.py --retries 1 --delay 60 -- /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_0830.log 2>&1
+30 8 * * 1-5 cd /Users/chenyiyun/PycharmProjects/AShareDataCenter && /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/schedule/run_with_retry.py --retries 1 --delay 60 -- /Users/chenyiyun/PycharmProjects/AShareDataCenter/.venv/bin/python scripts/sync/run_0830_pipeline.py --config config/etl.ini >> /Users/chenyiyun/PycharmProjects/AShareDataCenter/logs/cron_0830.log 2>&1
 
 
 # 4. 20:30 Index Suite Sync (A-share index + SW industry)
@@ -44,7 +44,7 @@ Run `crontab -e` in your terminal to edit cron jobs, and append the following li
     - Wraps the command execution.
     - Sends a macOS desktop notification on success or failure.
     - Retries automatically on failure (e.g., network glitch).
-- **`--lenient`**: Used at 17:00 and 20:00 to prevent failure due to missing T+1 data (like margin).
+- **`--lenient`**: Used at 17:00 and 20:00 to avoid false failures due to temporary data lag.
 - **Logs**: Output is redirected to `logs/cron_*.log` for troubleshooting.
 
 ## 4. Test Notification

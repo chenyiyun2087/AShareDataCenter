@@ -23,6 +23,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fina-start", type=int)
     parser.add_argument("--fina-end", type=int)
     parser.add_argument("--dividend", action="store_true", help="Sync dividend data")
+    parser.add_argument(
+        "--only-dividend",
+        action="store_true",
+        help="Run dividend sync only (skip base incremental/full load). Requires --dividend.",
+    )
+    parser.add_argument(
+        "--only-fina",
+        action="store_true",
+        help="Run fina sync only (skip base incremental/full load). Requires --fina-start/--fina-end.",
+    )
     parser.add_argument("--limit", type=int, help="Limit number of stocks (for testing)")
     parser.add_argument("--rate-limit", type=int, default=None)
     parser.add_argument("--config", default=None, help="Path to etl.ini")
@@ -72,15 +82,27 @@ def main() -> None:
 
     rate_limit = args.rate_limit or get_tushare_limit()
 
-    if args.mode == "full":
-        run_full(token, args.start_date, args.end_date, rate_limit)
-    else:
-        run_incremental(
-            token,
-            args.start_date if args.start_date != 20100101 else None,
-            args.end_date,
-            rate_limit,
-        )
+    if args.only_dividend and not args.dividend:
+        raise RuntimeError("--only-dividend requires --dividend")
+    if args.only_dividend and (args.fina_start or args.fina_end):
+        raise RuntimeError("--only-dividend cannot be combined with --fina-start/--fina-end")
+    if args.only_fina and not (args.fina_start and args.fina_end):
+        raise RuntimeError("--only-fina requires --fina-start and --fina-end")
+    if args.only_fina and args.dividend:
+        raise RuntimeError("--only-fina cannot be combined with --dividend")
+    if args.only_dividend and args.only_fina:
+        raise RuntimeError("--only-dividend cannot be combined with --only-fina")
+
+    if not args.only_dividend and not args.only_fina:
+        if args.mode == "full":
+            run_full(token, args.start_date, args.end_date, rate_limit)
+        else:
+            run_incremental(
+                token,
+                args.start_date if args.start_date != 20100101 else None,
+                args.end_date,
+                rate_limit,
+            )
 
     if args.fina_start and args.fina_end:
         run_fina_incremental(token, args.fina_start, args.fina_end, rate_limit, args.limit)

@@ -242,6 +242,9 @@ def run_full(start_date: int, end_date: int | None = None) -> None:
             
             if not trade_dates:
                 logging.info("No trade dates to process.")
+                with conn.cursor() as cursor:
+                    log_run_end(cursor, run_id, "SUCCESS")
+                    conn.commit()
                 return
 
             total_dates = len(trade_dates)
@@ -275,10 +278,30 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
             conn.commit()
         try:
             with conn.cursor() as cursor:
+                def _table_max_date(table_name: str) -> int | None:
+                    cursor.execute(f"SELECT MAX(trade_date) FROM {table_name}")
+                    row = cursor.fetchone()
+                    return int(row[0]) if row and row[0] else None
+
                 if start_date:
                     last_date = start_date - 1
                 else:
-                    last_date = get_watermark(cursor, "ads")
+                    ads_watermark = get_watermark(cursor, "ads")
+                    ads_max_date = _table_max_date("ads_features_stock_daily")
+                    if ads_max_date is not None and (
+                        ads_watermark is None or ads_watermark > ads_max_date
+                    ):
+                        logging.warning(
+                            "ads watermark (%s) is inconsistent with ads_features_stock_daily max (%s), "
+                            "resetting watermark baseline.",
+                            ads_watermark,
+                            ads_max_date,
+                        )
+                        ensure_watermark(cursor, "ads", ads_max_date)
+                        conn.commit()
+                        last_date = ads_max_date
+                    else:
+                        last_date = ads_watermark
 
                 if last_date is None:
                     raise RuntimeError("missing watermark for ads")
@@ -293,8 +316,25 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
                 today_int = int(datetime.now().strftime('%Y%m%d'))
                 trade_dates = [d for d in trade_dates if d <= today_int]
 
+                if trade_dates:
+                    cursor.execute(
+                        "SELECT DISTINCT trade_date FROM dws_price_adj_daily WHERE trade_date BETWEEN %s AND %s",
+                        (trade_dates[0], trade_dates[-1]),
+                    )
+                    available_dates = {int(row[0]) for row in cursor.fetchall()}
+                    missing_dates = [d for d in trade_dates if d not in available_dates]
+                    if missing_dates:
+                        raise RuntimeError(
+                            "dws_price_adj_daily missing source dates for ads: "
+                            + ", ".join(map(str, missing_dates[:5]))
+                            + (" ..." if len(missing_dates) > 5 else "")
+                        )
+
             if not trade_dates:
                 logging.info("No new trade dates to process.")
+                with conn.cursor() as cursor:
+                    log_run_end(cursor, run_id, "SUCCESS")
+                    conn.commit()
                 return
 
             # Batch Optimization: if more than 5 days, use batch mode
@@ -312,6 +352,7 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
                             _run_ads_batch(cursor, trade_date, trade_date)
                             update_watermark(cursor, "ads", trade_date, "SUCCESS")
                             conn.commit()
+                            last_date = trade_date
                         except Exception as exc:
                             update_watermark(cursor, "ads", last_date, "FAILED", str(exc))
                             conn.rollback()

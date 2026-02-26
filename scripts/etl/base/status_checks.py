@@ -39,10 +39,18 @@ class LayerStatus:
 
 def _get_latest_trade_date(cursor) -> Optional[int]:
     """Get the latest trade date from calendar (excluding future dates)."""
+    from datetime import datetime, time as dtime
+
+    now = datetime.now()
+    today_int = int(now.strftime("%Y%m%d"))
+    include_today = now.time() >= dtime(16, 0)
+    op = "<=" if include_today else "<"
+
     cursor.execute(
         "SELECT MAX(cal_date) FROM dim_trade_cal "
         "WHERE exchange='SSE' AND is_open=1 "
-        "AND cal_date <= DATE_FORMAT(CURDATE(), '%Y%m%d')"
+        f"AND cal_date {op} %s",
+        (today_int,),
     )
     row = cursor.fetchone()
     return int(row[0]) if row and row[0] else None

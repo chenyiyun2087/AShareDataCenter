@@ -23,6 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument("--token", default=None)
     parser.add_argument("--rate-limit", type=int, default=None)
+    parser.add_argument(
+        "--dividend-rate-limit",
+        type=int,
+        default=480,
+        help="Rate limit for dividend endpoint (per minute). Keep <= 500.",
+    )
     parser.add_argument("--start-date", type=int, default=None)
     parser.add_argument("--end-date", type=int, default=None)
     parser.add_argument("--fina-start", type=int, default=None)
@@ -76,18 +82,41 @@ def _apply_config(config: Optional[str]) -> None:
 
 
 def _latest_trade_date() -> Optional[int]:
+    # Before market close, use previous trade day as expected date.
+    from datetime import datetime, time as dtime
+
     cfg = get_env_config()
+    now = datetime.now()
+    today_int = int(now.strftime("%Y%m%d"))
+    include_today = now.time() >= dtime(16, 0)
+
     with get_mysql_session(cfg) as conn:
         with conn.cursor() as cursor:
+            op = "<=" if include_today else "<"
             cursor.execute(
                 "SELECT MAX(cal_date) FROM dim_trade_cal "
-                "WHERE exchange='SSE' AND is_open=1 "
-                "AND cal_date <= DATE_FORMAT(CURDATE(), '%Y%m%d')"
+                f"WHERE exchange='SSE' AND is_open=1 AND cal_date {op} %s",
+                (today_int,),
             )
             row = cursor.fetchone()
             if row and row[0]:
                 return int(row[0])
             cursor.execute("SELECT MAX(trade_date) FROM ods_daily")
+            row = cursor.fetchone()
+            if row and row[0]:
+                return int(row[0])
+    return None
+
+
+def _latest_fina_ann_date_in_range(start_date: int, end_date: int) -> Optional[int]:
+    """Return latest ann_date synced into ods_fina_indicator within the requested range."""
+    cfg = get_env_config()
+    with get_mysql_session(cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT MAX(ann_date) FROM ods_fina_indicator WHERE ann_date BETWEEN %s AND %s",
+                (start_date, end_date),
+            )
             row = cursor.fetchone()
             if row and row[0]:
                 return int(row[0])
@@ -157,6 +186,14 @@ def main() -> None:
         end_date = args.end_date or expected_trade_date
 
         rate_limit = args.rate_limit or get_tushare_limit()
+        dividend_rate_limit = args.dividend_rate_limit
+        if dividend_rate_limit <= 0:
+            raise RuntimeError("dividend_rate_limit must be > 0")
+        if dividend_rate_limit > 500:
+            print(
+                f"Warning: dividend_rate_limit={dividend_rate_limit} exceeds endpoint cap 500; clamping to 500."
+            )
+            dividend_rate_limit = 500
         python = sys.executable
         base_cmd = [python]
         if args.config:
@@ -169,15 +206,19 @@ def main() -> None:
             print(f"Resolved expected_trade_date={expected_trade_date}")
             print(f"Resolved start_date={start_date} end_date={end_date}")
             print(f"Resolved rate_limit={rate_limit}")
+            print(f"Resolved dividend_rate_limit={dividend_rate_limit}")
 
         def get_script(rel_path: str) -> str:
             return str((project_root / rel_path).resolve())
 
-        ods_args = ["--mode", "incremental"]
-        if args.start_date:
-            ods_args += ["--start-date", str(args.start_date)]
-        if args.end_date:
-            ods_args += ["--end-date", str(args.end_date)]
+        ods_args = [
+            "--mode",
+            "incremental",
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
 
         _run_step(
             "ODS incremental",
@@ -194,8 +235,18 @@ def main() -> None:
         _run_step(
             "ODS dividend incremental",
             base_cmd
-            + [get_script("scripts/sync/run_ods.py"), "--dividend"]
-            + ["--rate-limit", str(rate_limit)]
+            + [
+                get_script("scripts/sync/run_ods.py"),
+                "--mode",
+                "incremental",
+                "--start-date",
+                str(start_date),
+                "--end-date",
+                str(end_date),
+                "--dividend",
+                "--only-dividend",
+            ]
+            + ["--rate-limit", str(dividend_rate_limit)]
             + base_config
             + ["--token", token],
             args.debug,
@@ -297,20 +348,21 @@ def main() -> None:
             stats
         )
 
-        # Financial data: default to checking last 7 days if not specified
-        # This catches new announcements (ann_date)
+        # Financial data: default to the latest 7 calendar days if not specified.
+        # This catches newly announced reports around current trade date.
         fina_start = args.fina_start
         fina_end = args.fina_end
-        if not fina_start:
-             # Look back 7 days default
-             from datetime import datetime, timedelta
-             try:
-                 end_dt = datetime.strptime(str(end_date), "%Y%m%d")
-                 start_dt = end_dt - timedelta(days=7)
-                 fina_start = int(start_dt.strftime("%Y%m%d"))
-                 fina_end = end_date
-             except ValueError:
-                 print(f"Warning: could not parse end_date {end_date}, skipping auto-fina sync")
+        if fina_start is None or fina_end is None:
+            from datetime import datetime, timedelta
+            try:
+                end_dt = datetime.strptime(str(end_date), "%Y%m%d")
+                start_dt = end_dt - timedelta(days=7)
+                if fina_start is None:
+                    fina_start = int(start_dt.strftime("%Y%m%d"))
+                if fina_end is None:
+                    fina_end = end_date
+            except ValueError:
+                print(f"Warning: could not parse end_date {end_date}, skipping auto-fina sync")
 
         if fina_start and fina_end:
             _run_step(
@@ -320,6 +372,7 @@ def main() -> None:
                     get_script("scripts/sync/run_ods.py"),
                     "--mode",
                     "incremental",
+                    "--only-fina",
                     "--fina-start",
                     str(fina_start),
                     "--fina-end",
@@ -332,14 +385,40 @@ def main() -> None:
                 args.debug,
                 stats
             )
+
+            _run_step(
+                "DWD fina incremental",
+                base_cmd
+                + [
+                    get_script("scripts/sync/run_dwd.py"),
+                    "--mode",
+                    "incremental",
+                    "--only-fina",
+                    "--fina-start",
+                    str(fina_start),
+                    "--fina-end",
+                    str(fina_end),
+                ]
+                + base_config,
+                args.debug,
+                stats
+            )
+
+            observed_fina_ann_date = _latest_fina_ann_date_in_range(fina_start, fina_end)
+            if args.debug:
+                print(f"Observed fina ann_date in range [{fina_start}, {fina_end}]: {observed_fina_ann_date}")
+
             check_fina_cmd = base_cmd + [
                 get_script("scripts/check/check_data_status.py"),
                 "--categories",
                 "financial",
                 "--fail-on-stale",
+                "--min-fina-trade-date",
+                str(expected_trade_date),
             ]
-            if fina_end is not None:
-                check_fina_cmd += ["--min-fina-ann-date", str(fina_end)]
+            # Only enforce ann_date threshold when there are actual announcements in the synced range.
+            if observed_fina_ann_date is not None:
+                check_fina_cmd += ["--min-fina-ann-date", str(observed_fina_ann_date)]
             check_fina_cmd += lenient_config
 
             _run_step(
@@ -350,11 +429,14 @@ def main() -> None:
             )
 
         # 5. DWD incremental
-        dwd_args = ["--mode", "incremental"]
-        if args.start_date:
-            dwd_args += ["--start-date", str(args.start_date)]
-        if args.end_date:
-            dwd_args += ["--end-date", str(args.end_date)]
+        dwd_args = [
+            "--mode",
+            "incremental",
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
 
         _run_step(
             "DWD incremental",
@@ -380,11 +462,14 @@ def main() -> None:
         )
 
         # 6. DWS incremental
-        dws_args = ["--mode", "incremental"]
-        if args.start_date:
-            dws_args += ["--start-date", str(args.start_date)]
-        if args.end_date:
-            dws_args += ["--end-date", str(args.end_date)]
+        dws_args = [
+            "--mode",
+            "incremental",
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
 
         _run_step(
             "DWS incremental",
@@ -410,11 +495,14 @@ def main() -> None:
         )
 
         # 7. ADS incremental
-        ads_args = ["--mode", "incremental"]
-        if args.start_date:
-            ads_args += ["--start-date", str(args.start_date)]
-        if args.end_date:
-            ads_args += ["--end-date", str(args.end_date)]
+        ads_args = [
+            "--mode",
+            "incremental",
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
 
         _run_step(
             "ADS incremental",

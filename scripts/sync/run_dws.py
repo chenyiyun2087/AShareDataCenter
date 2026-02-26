@@ -12,7 +12,7 @@ scripts_dir = Path(__file__).resolve().parents[1]
 if str(scripts_dir) not in sys.path:
     sys.path.insert(0, str(scripts_dir))
 
-from etl.dws import run_full, run_incremental
+from etl.dws import run_full, run_incremental, run_leverage_sentiment_incremental
 from etl.base.runtime import (
     ensure_watermark,
     get_env_config,
@@ -58,6 +58,11 @@ def parse_args() -> argparse.Namespace:
         "--disable-watermark",
         action="store_true",
         help="Disable watermark updates (used by internal chunk workers).",
+    )
+    parser.add_argument(
+        "--only-leverage-sentiment",
+        action="store_true",
+        help="Only refresh dws_leverage_sentiment for the specified date range.",
     )
     return parser.parse_args()
 
@@ -166,6 +171,8 @@ def _build_child_cmd(args: argparse.Namespace, chunk_start: int, chunk_end: int)
         cmd += ["--password", args.password]
     if args.database:
         cmd += ["--database", args.database]
+    if args.only_leverage_sentiment:
+        cmd.append("--only-leverage-sentiment")
     return cmd
 
 
@@ -216,6 +223,15 @@ def main() -> None:
     _estimate_runtime(args)
     if args.estimate_only:
         logging.info("Estimate-only mode, exiting.")
+        return
+
+    if args.only_leverage_sentiment:
+        if args.mode != "incremental":
+            raise RuntimeError("--only-leverage-sentiment requires --mode incremental")
+        if not args.end_date:
+            raise RuntimeError("--only-leverage-sentiment requires --end-date")
+        run_leverage_sentiment_incremental(args.start_date, args.end_date)
+        logging.info("DWS leverage sentiment refresh completed successfully")
         return
 
     if args.mode == "full":

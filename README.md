@@ -13,7 +13,9 @@
 - `scripts/sync/run_dwd.py`：DWD 标准明细
 - `scripts/sync/run_dws.py`：DWS 主题衍生
 - `scripts/sync/run_ads.py`：ADS 服务层
-- `scripts/sync/run_daily_pipeline.py`：每日增量全流程（含检查与耗时统计）
+- `scripts/sync/run_1700_pipeline.py`：17:00 核心批次（主链路，不含 dividend/fina 增强）
+- `scripts/sync/run_2000_pipeline.py`：20:00 增强批次（dividend + fina + 完整性巡检）
+- `scripts/sync/run_0830_pipeline.py`：T+1 08:30 两融补全批次（margin-first）
 - `scripts/check/check_ods_features.py`：ODS 特征数据完整性检查
 - `scripts/check/check_data_status.py`：全链路数据状态检查（ODS/Financial/Features/DWD/DWS/ADS）
 - `scripts/sync/run_fina_yearly.py`：按年补齐财务指标（fina_indicator）
@@ -39,12 +41,18 @@
    python scripts/sync/run_dws.py --mode incremental
    python scripts/sync/run_ads.py --mode incremental
    ```
-5. 每日增量全流程（自动分步校验与耗时统计）：
+5. 按生产批次执行（推荐）：
    ```bash
-   python scripts/sync/run_daily_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN
-   # 传入 --debug 查看每步耗时与参数
-   python scripts/sync/run_daily_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN --debug
+   # 17:00 核心批次（主链路）
+   python scripts/sync/run_1700_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN --lenient
+
+   # 20:00 增强批次（dividend + fina + 完整性）
+   python scripts/sync/run_2000_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN --lenient
+
+   # T+1 08:30 两融补全批次
+   python scripts/sync/run_0830_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN
    ```
+
 6. 财务指标补齐（按公告期窗口）：
    ```bash
    python scripts/sync/run_fina_yearly.py --start-year 2020 --end-year 2023
@@ -61,13 +69,13 @@
    python scripts/check/inspect_data_completeness.py --end-date 20260213 --days 30 --config config/etl.ini
    ```
 
-9. 指数专题同步（A股核心指数 + 申万行业）：
+8. 指数专题同步（A股核心指数 + 申万行业）：
    ```bash
    python scripts/sync/run_index_suite.py --start-date 20100101 --end-date 20261231 --config config/etl.ini
    python scripts/check/check_index_suite_status.py --start-date 20100101 --end-date 20261231 --config config/etl.ini --fail-on-empty
    ```
 
-8. Web 控制台：
+9. Web 控制台：
    ```bash
    # 启动 Flask 服务（已集成前端静态资源）
    python scripts/run_web.py --port 5999
@@ -81,8 +89,6 @@
 - 失败类型统计：`python scripts/check/batch_failure_stats.py --hours 24`
 - 重试与幂等保护：`python scripts/schedule/stability_guard.py --task-name ... --idempotency-key ... -- --command`
 - 看板与报警：`python scripts/check/batch_slo_dashboard.py --hours 24`
-- 方案说明：`docs/batch_stability_hardening.md`
-
 - 方案说明：`docs/batch_stability_hardening.md`
 
 ## Web 界面功能
@@ -238,16 +244,14 @@ npm run dev
 |------|------|
 | `dim_stock` | 股票维度 (代码/名称/行业/上市日期) |
 | `dim_trade_cal` | 交易日历 (SSE/SZSE) |
-218: 
-219: ---
-220: 
-221: ## 执行策略与数据就绪时间
-222: 
-223: 为确保每日增量任务高效、准确，建议参考以下数据就绪时间安排批量执行计划。
-224: 
-225: ### 数据就绪时间表预测 (针对交易日 T)
-226: 
-227: | 数据类型 | 对应 ODS 表名 | 预计就绪时间 | 备注 |
+
+## 执行策略与数据就绪时间
+
+为确保每日增量任务高效、准确，建议参考以下数据就绪时间安排批量执行计划。
+
+### 数据就绪时间表预测 (针对交易日 T)
+
+| 数据类型 | 对应 ODS 表名 | 预计就绪时间 | 备注 |
 | :--- | :--- | :--- | :--- |
 | **基础行情/指标** | `ods_daily`, `ods_daily_basic` | 15:30 - 17:00 | OHLCV、PE、PB、总市值等 |
 | **资金流向** | `ods_moneyflow` | 16:00 - 18:00 | 大单/中单/小单净流入 |
@@ -261,32 +265,32 @@ npm run dev
 为适配 TuShare 数据发布节奏，流水线分为三个核心阶段执行：
 
 #### 1. 下午同步 (17:00 以后) - 基础行情阶段
-同步基础行情、估值、**A股核心指数 (含SW行业)** 与 DWD/DWS/ADS 基础计算。
-- **命令**: `python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient`
-- **说明**: 使用宽容模式 (`--lenient`)，会自动忽略尚未发布的特征数据（如主力流向、两融），但会更新 `ods_index_*` 数据。
+同步基础行情、核心特征（不含两融）、A股核心指数与 DWD/DWS/ADS 基础计算。
+- **命令**: `python scripts/sync/run_1700_pipeline.py --config config/etl.ini --lenient`
+- **说明**: 使用宽容模式 (`--lenient`)，适合收盘后快速产出当日主链路结果。
 
-#### 2. 晚间强化 (20:00 以后) - 特征更新与模型就绪
-获取绝大部分特征数据（资金流、筹码、技术因子）并自动运行**数据完整性检查**。
-- **命令**: `scripts/schedule/run_2000_task.sh`
-- **日志**: 详细任务过程记录在 `logs/cron_2000.log`，全链路状态报告追加至 `logs/yyyyMMdd.log`。
-- **说明**: 该阶段通过完整性检查确认“今日”数据全貌，确保模型预测基于最新且完整的特征。
+#### 2. 晚间强化 (20:00 以后) - 增强与完整性阶段
+执行增强链路：`dividend` + 财务增量（ODS/DWD fina）+ 数据完整性巡检。
+- **命令**: `python scripts/sync/run_2000_pipeline.py --config config/etl.ini --lenient`
+- **日志**: 详细任务过程记录在 `logs/cron_2000.log`。
+- **说明**: 与 17:00 批次解耦，减少整链路重复运行。
 
 #### 3. 完整同步 (次日 T+1 08:30 以前) - 最终闭环阶段
-补齐最晚发布的融资融券数据，完成全量指数更新与 ADS 评分更新。
-- **命令**: `python scripts/sync/run_daily_pipeline.py --config config/etl.ini`
-- **说明**: 不带 `--lenient`，确保所有表 (含 `ods_index_weight` 等指标) 均完整且检查通过。
+补齐最晚发布的融资融券数据，并完成下游 DWD/DWS/ADS 的闭环更新。
+- **命令**: `python scripts/sync/run_0830_pipeline.py --config config/etl.ini`
+- **说明**: 聚焦两融 T+1 补全与下游同步。
 
 ### 自动化调度 (Cron)
 建议在 `crontab` 中配置以下脚本：
 ```bash
 # 1. 17:00 Afternoon Sync (Basic Data)
-0 17 * * 1-5 cd /path/to/project && .venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient
+0 17 * * 1-5 cd /path/to/project && .venv/bin/python scripts/schedule/run_with_retry.py --retries 3 --delay 300 -- .venv/bin/python scripts/sync/run_1700_pipeline.py --config config/etl.ini --lenient >> logs/cron_1700.log 2>&1
 
-# 2. 20:00 Evening Enhancement (Features & Factors + Integrity Check)
-0 20 * * 1-5 /path/to/project/scripts/schedule/run_2000_task.sh
+# 2. 20:00 Evening Enhancement (Dividend + Fina + Integrity Check)
+0 20 * * 1-5 cd /path/to/project && .venv/bin/python scripts/schedule/run_with_retry.py --retries 3 --delay 300 -- .venv/bin/python scripts/sync/run_2000_pipeline.py --config config/etl.ini --lenient >> logs/cron_2000.log 2>&1
 
-# 3. 08:30 T+1 Morning Completion (Margin Data & Full ADS)
-30 8 * * 1-5 cd /path/to/project && .venv/bin/python scripts/sync/run_daily_pipeline.py --config config/etl.ini
+# 3. 08:30 T+1 Morning Completion (Margin-first)
+30 8 * * 1-5 cd /path/to/project && .venv/bin/python scripts/schedule/run_with_retry.py --retries 1 --delay 60 -- .venv/bin/python scripts/sync/run_0830_pipeline.py --config config/etl.ini >> logs/cron_0830.log 2>&1
 ```
 
 ### 宽容模式说明 (`--lenient`)
@@ -497,13 +501,16 @@ To automate this year-by-year execution, use the provided batch script with requ
    python scripts/check/cleanup_stale_tasks.py
    ```
 2. **手动补录数据**:
-   使用 `--lenient` 模式（宽容模式）手动触发积压日期的同步：
+   按批次手动补跑（推荐），避免整链路重复：
    ```bash
-   # 后台运行并将日志输出到 manual_sync.log
-   PYTHONUNBUFFERED=1 nohup python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient >> logs/manual_sync.log 2>&1 &
-   
-   # 查看进度
-   tail -f logs/manual_sync.log
+   # 17:00 核心批次
+   PYTHONUNBUFFERED=1 nohup python scripts/sync/run_1700_pipeline.py --config config/etl.ini --lenient >> logs/manual_1700.log 2>&1 &
+
+   # 20:00 增强批次
+   PYTHONUNBUFFERED=1 nohup python scripts/sync/run_2000_pipeline.py --config config/etl.ini --lenient >> logs/manual_2000.log 2>&1 &
+
+   # 次日 08:30 两融补全批次
+   PYTHONUNBUFFERED=1 nohup python scripts/sync/run_0830_pipeline.py --config config/etl.ini >> logs/manual_0830.log 2>&1 &
    ```
 
 ## Daily Pipeline Verification Checklist
@@ -546,14 +553,20 @@ python scripts/check/check_index_suite_status.py --config config/etl.ini --fail-
 ```
 
 ### 4. Manual Trigger (Troubleshooting)
-If any step fails or is missing, you can manually trigger the specific component or the entire pipeline in broad mode:
+If any step fails or is missing, you can manually trigger by batch (recommended):
 
 ```bash
-# Run full daily pipeline (lenient mode for partial data)
-python scripts/sync/run_daily_pipeline.py --config config/etl.ini --lenient --token $TUSHARE_TOKEN
+# 17:00 core batch
+python scripts/sync/run_1700_pipeline.py --config config/etl.ini --lenient --token $TUSHARE_TOKEN
+
+# 20:00 enhancement batch
+python scripts/sync/run_2000_pipeline.py --config config/etl.ini --lenient --token $TUSHARE_TOKEN
+
+# 08:30 T+1 margin-first batch
+python scripts/sync/run_0830_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN
 
 # Run specific component (e.g., Dividend Sync)
-python scripts/sync/run_ods.py --dividend --config config/etl.ini
+python scripts/sync/run_ods.py --dividend --only-dividend --config config/etl.ini
 ```
 
 ---

@@ -44,3 +44,4 @@ ENV/
 *.xlsx
 *.csv
 .pytest_cache/
+/.agents/

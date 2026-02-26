@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -275,6 +277,311 @@ INTEGRITY_TABLES: Dict[str, Tuple[str, str]] = {
 }
 
 MAX_INTEGRITY_WINDOW = 120
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
+SUPPORTED_DATA_LAYERS = {"ods", "dwd", "dws", "ads"}
+SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_]+$")
+DATE_TEXT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+BATCH_CHECK_CONFIG = {
+    "1700": {
+        "check_script": ROOT_DIR / "scripts" / "check" / "check_1700_task_status.py",
+        "log_file": ROOT_DIR / "logs" / "cron_1700.log",
+    },
+    "2000": {
+        "check_script": ROOT_DIR / "scripts" / "check" / "check_2000_task_status.py",
+        "log_file": ROOT_DIR / "logs" / "cron_2000.log",
+    },
+    "0830": {
+        "check_script": ROOT_DIR / "scripts" / "check" / "check_0830_task_status.py",
+        "log_file": ROOT_DIR / "logs" / "cron_0830.log",
+    },
+}
+
+
+def _is_safe_identifier(name: str) -> bool:
+    return bool(name and SAFE_IDENTIFIER_RE.fullmatch(name))
+
+
+def _normalize_layer(layer: Optional[str]) -> str:
+    normalized = (layer or "").strip().lower()
+    if normalized not in SUPPORTED_DATA_LAYERS:
+        raise ValueError(f"Unsupported layer: {layer}")
+    return normalized
+
+
+def _normalize_page_size(value: Optional[str]) -> int:
+    if value is None or value == "":
+        return DEFAULT_PAGE_SIZE
+    parsed = int(value)
+    return max(1, min(parsed, MAX_PAGE_SIZE))
+
+
+def _list_layer_tables(cursor, layer: str) -> List[str]:
+    cursor.execute(
+        """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name LIKE %s
+        ORDER BY table_name
+        """,
+        [f"{layer}_%"],
+    )
+    return [str(row[0]) for row in cursor.fetchall()]
+
+
+def _list_table_columns(cursor, table: str) -> List[str]:
+    cursor.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = %s
+        ORDER BY ordinal_position
+        """,
+        [table],
+    )
+    return [str(row[0]) for row in cursor.fetchall()]
+
+
+def _build_table_row_filters(
+    columns: List[str],
+    search_ts_code: Optional[str],
+    search_trade_date: Optional[str],
+) -> Tuple[List[str], List[object]]:
+    filters: List[str] = []
+    params: List[object] = []
+
+    if search_ts_code and "ts_code" in columns:
+        filters.append("ts_code LIKE %s")
+        params.append(f"%{search_ts_code.strip().upper()}%")
+
+    if search_trade_date and "trade_date" in columns:
+        trade_date = _parse_int_date(search_trade_date)
+        if trade_date is not None:
+            filters.append("trade_date = %s")
+            params.append(trade_date)
+
+    return filters, params
+
+
+def _fetch_layer_rows(
+    layer: str,
+    table: str,
+    page: int,
+    page_size: int,
+    search_ts_code: Optional[str],
+    search_trade_date: Optional[str],
+) -> Tuple[List[str], List[Tuple], int]:
+    normalized_layer = _normalize_layer(layer)
+    if page < 1:
+        raise ValueError("page must be >= 1")
+    if not _is_safe_identifier(table):
+        raise ValueError(f"Invalid table name: {table}")
+
+    cfg = get_env_config()
+    with get_mysql_session(cfg) as conn:
+        with conn.cursor() as cursor:
+            allowed_tables = set(_list_layer_tables(cursor, normalized_layer))
+            if table not in allowed_tables:
+                raise ValueError(f"Table not found in layer {normalized_layer}: {table}")
+
+            columns = _list_table_columns(cursor, table)
+            if not columns:
+                raise ValueError(f"No columns found for table: {table}")
+
+            filters, params = _build_table_row_filters(columns, search_ts_code, search_trade_date)
+            where_sql = f" WHERE {' AND '.join(filters)}" if filters else ""
+
+            count_sql = f"SELECT COUNT(*) FROM `{table}`{where_sql}"
+            cursor.execute(count_sql, params)
+            total = int(cursor.fetchone()[0])
+
+            order_parts: List[str] = []
+            if "trade_date" in columns:
+                order_parts.append("trade_date DESC")
+            if "ts_code" in columns:
+                order_parts.append("ts_code ASC")
+            order_sql = f" ORDER BY {', '.join(order_parts)}" if order_parts else ""
+
+            offset = (page - 1) * page_size
+            rows_sql = f"SELECT * FROM `{table}`{where_sql}{order_sql} LIMIT %s OFFSET %s"
+            cursor.execute(rows_sql, [*params, page_size, offset])
+            rows = cursor.fetchall()
+
+    return columns, rows, total
+
+
+def _ensure_stock_pool_ready(cursor) -> None:
+    _ensure_stock_pool_tables(cursor)
+    _seed_system_pools(cursor)
+
+
+def _pool_id_by_name(cursor, pool_name: str) -> Optional[int]:
+    _ensure_stock_pool_ready(cursor)
+    cursor.execute("SELECT id FROM app_stock_pool WHERE pool_name=%s", [pool_name])
+    row = cursor.fetchone()
+    return int(row[0]) if row else None
+
+
+def _get_or_create_pool(cursor, pool_name: str, pool_type: str, is_system: int) -> int:
+    _ensure_stock_pool_ready(cursor)
+    cursor.execute("SELECT id FROM app_stock_pool WHERE pool_name=%s", [pool_name])
+    row = cursor.fetchone()
+    if row:
+        return int(row[0])
+
+    cursor.execute(
+        """
+        INSERT INTO app_stock_pool (pool_name, pool_type, is_system)
+        VALUES (%s, %s, %s)
+        """,
+        [pool_name, pool_type, int(is_system)],
+    )
+    return int(cursor.lastrowid)
+
+
+def _validate_date_text(value: str, field_name: str) -> str:
+    if not DATE_TEXT_RE.fullmatch(value):
+        raise ValueError(f"Invalid {field_name}: {value}. Expected YYYY-MM-DD.")
+    datetime.strptime(value, "%Y-%m-%d")
+    return value
+
+
+def _extract_json_from_stdout(stdout: str) -> dict:
+    text = (stdout or "").strip()
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            return json.loads(text[start : end + 1])
+        raise
+
+
+def _run_batch_check(batch_id: str, target_date: str) -> dict:
+    config = BATCH_CHECK_CONFIG[batch_id]
+    cmd = [
+        sys.executable,
+        str(config["check_script"]),
+        "--date",
+        target_date,
+        "--config",
+        str(ROOT_DIR / "config" / "etl.ini"),
+        "--json",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT_DIR), check=False)
+    data = {}
+    parse_error = None
+    if proc.stdout:
+        try:
+            data = _extract_json_from_stdout(proc.stdout)
+        except Exception as exc:
+            parse_error = str(exc)
+    state = str(data.get("state") or "").upper()
+    if not state:
+        state = "UNKNOWN"
+    if proc.returncode not in (0, 1) and state != "FAILED":
+        state = "ERROR"
+    if parse_error:
+        state = "ERROR"
+    reason = data.get("reason") or ""
+    if parse_error:
+        reason = f"Failed to parse checker output: {parse_error}"
+    if proc.returncode not in (0, 1):
+        reason = reason or f"Checker exited with code {proc.returncode}."
+
+    return {
+        "batch_id": batch_id,
+        "target_date": target_date,
+        "state": state,
+        "reason": reason,
+        "log_file": data.get("log_file") or str(config["log_file"]),
+        "success_line": data.get("success_line"),
+        "failed_line": data.get("failed_line"),
+        "log_start_line": data.get("log_start_line"),
+        "latest_log_timestamp": data.get("latest_log_timestamp"),
+        "active_process_count": data.get("active_process_count"),
+        "db_running_count": data.get("db_running_count"),
+        "db_latest_rows": data.get("db_latest_rows"),
+    }
+
+
+def _build_batch_rerun_command(batch_id: str, payload: dict) -> Tuple[List[str], Path]:
+    python_exec = str(ROOT_DIR / ".venv" / "bin" / "python")
+    config_arg = ["--config", "config/etl.ini"]
+    run_with_retry = [python_exec, str(ROOT_DIR / "scripts" / "schedule" / "run_with_retry.py")]
+
+    if batch_id == "1700":
+        cmd = (
+            run_with_retry
+            + [
+                "--retries",
+                "3",
+                "--delay",
+                "300",
+                "--",
+                python_exec,
+                str(ROOT_DIR / "scripts" / "sync" / "run_1700_pipeline.py"),
+            ]
+            + config_arg
+            + ["--lenient"]
+        )
+        return cmd, ROOT_DIR / "logs" / "cron_1700.log"
+
+    if batch_id == "2000":
+        cmd = (
+            run_with_retry
+            + [
+                "--retries",
+                "3",
+                "--delay",
+                "300",
+                "--",
+                python_exec,
+                str(ROOT_DIR / "scripts" / "sync" / "run_2000_pipeline.py"),
+            ]
+            + config_arg
+            + ["--lenient"]
+        )
+        return cmd, ROOT_DIR / "logs" / "cron_2000.log"
+
+    if batch_id == "0830":
+        cmd = (
+            run_with_retry
+            + [
+                "--retries",
+                "1",
+                "--delay",
+                "60",
+                "--",
+                python_exec,
+                str(ROOT_DIR / "scripts" / "sync" / "run_0830_pipeline.py"),
+            ]
+            + config_arg
+        )
+        trade_date = payload.get("trade_date")
+        if trade_date not in (None, ""):
+            trade_date_text = str(trade_date).strip().replace("-", "")
+            if not (trade_date_text.isdigit() and len(trade_date_text) == 8):
+                raise ValueError(f"Invalid trade_date: {trade_date}. Expected YYYYMMDD.")
+            cmd.extend(
+                [
+                    "--expected-trade-date",
+                    trade_date_text,
+                    "--start-date",
+                    trade_date_text,
+                    "--end-date",
+                    trade_date_text,
+                ]
+            )
+        return cmd, ROOT_DIR / "logs" / "cron_0830.log"
+
+    raise ValueError(f"Unsupported batch_id: {batch_id}")
 
 
 def _parse_int_date(value: Optional[str]) -> Optional[int]:
@@ -292,6 +599,7 @@ def _list_trade_dates_for_integrity(
     end_date: Optional[int],
     limit: int,
 ) -> List[int]:
+    today_int = int(datetime.now().strftime("%Y%m%d"))
     clauses = ["exchange=%s", "is_open=1"]
     params: List[object] = ["SSE"]
     if start_date is not None:
@@ -300,6 +608,10 @@ def _list_trade_dates_for_integrity(
     if end_date is not None:
         clauses.append("cal_date <= %s")
         params.append(end_date)
+    else:
+        # Default to current day to avoid selecting future open days from trade calendar.
+        clauses.append("cal_date <= %s")
+        params.append(today_int)
 
     where_sql = " AND ".join(clauses)
     sql = (
@@ -310,6 +622,23 @@ def _list_trade_dates_for_integrity(
     cursor.execute(sql, [*params, limit])
     rows = cursor.fetchall()
     return [int(row[0]) for row in rows]
+
+
+def _latest_open_trade_date(cursor, on_or_before: Optional[int] = None) -> Optional[int]:
+    today_int = int(datetime.now().strftime("%Y%m%d"))
+    target = on_or_before if on_or_before is not None else today_int
+    cursor.execute(
+        """
+        SELECT MAX(cal_date)
+        FROM dim_trade_cal
+        WHERE exchange=%s AND is_open=1 AND cal_date <= %s
+        """,
+        ["SSE", target],
+    )
+    row = cursor.fetchone()
+    if not row or row[0] is None:
+        return None
+    return int(row[0])
 
 
 def _fetch_table_counts_by_dates(
@@ -344,6 +673,8 @@ def api_stock_pools():
     try:
         with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
+                _ensure_stock_pool_ready(cursor)
+                conn.commit()
 
                 if request.method == "POST":
                     pool_name = (payload.get("pool_name") or "").strip()
@@ -377,6 +708,8 @@ def api_stock_pool_update(pool_name: str):
     try:
         with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
+                _ensure_stock_pool_ready(cursor)
+                conn.commit()
                 cursor.execute("SELECT id, is_system FROM app_stock_pool WHERE pool_name=%s", [pool_name])
                 row = cursor.fetchone()
                 if not row:
@@ -410,6 +743,8 @@ def api_stock_pool_stocks(pool_name: str):
     try:
         with get_mysql_session(cfg) as conn:
             with conn.cursor() as cursor:
+                _ensure_stock_pool_ready(cursor)
+                conn.commit()
                 pool_id = _pool_id_by_name(cursor, pool_name)
                 if pool_id is None:
                     return _json_error("pool not found", 404)
@@ -594,6 +929,74 @@ def api_task_history():
         return _json_error(str(exc))
 
 
+@app.route("/api/batches/status", methods=["GET"])
+def api_batches_status():
+    try:
+        default_date = datetime.now().strftime("%Y-%m-%d")
+        date_map = {
+            "1700": request.args.get("date_1700") or default_date,
+            "2000": request.args.get("date_2000") or default_date,
+            "0830": request.args.get("date_0830") or default_date,
+        }
+
+        for key in date_map:
+            date_map[key] = _validate_date_text(str(date_map[key]), f"date_{key}")
+
+        items = []
+        for batch_id in ("1700", "2000", "0830"):
+            items.append(_run_batch_check(batch_id, date_map[batch_id]))
+
+        return jsonify(
+            {
+                "data": {
+                    "items": items,
+                    "dates": date_map,
+                    "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            }
+        )
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+@app.route("/api/batches/rerun", methods=["POST"])
+def api_batches_rerun():
+    payload = _get_payload()
+    try:
+        batch_id = str(payload.get("batch_id") or "").strip()
+        if batch_id not in BATCH_CHECK_CONFIG:
+            return _json_error(f"Unsupported batch_id: {batch_id}", 400)
+
+        cmd, log_path = _build_batch_rerun_command(batch_id, payload)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as log_file:
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT_DIR),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+
+        return jsonify(
+            {
+                "message": "Batch rerun started.",
+                "data": {
+                    "batch_id": batch_id,
+                    "pid": process.pid,
+                    "log_file": str(log_path),
+                    "command": cmd,
+                },
+            }
+        )
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
 @app.route("/api/checks/data", methods=["GET"])
 def api_checks_data():
     try:
@@ -651,9 +1054,38 @@ def api_checks_data():
         return _json_error(str(exc))
 
 
+@app.route("/api/trade-calendar/latest", methods=["GET"])
+def api_trade_calendar_latest():
+    try:
+        on_or_before = _parse_int_date(request.args.get("on_or_before"))
+        cfg = get_env_config()
+        with get_mysql_session(cfg) as conn:
+            with conn.cursor() as cursor:
+                latest_trade_date = _latest_open_trade_date(cursor, on_or_before=on_or_before)
+        return jsonify(
+            {
+                "data": {
+                    "latest_trade_date": latest_trade_date,
+                    "on_or_before": on_or_before,
+                }
+            }
+        )
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
 @app.route("/api/ods/tables", methods=["GET"])
 def api_ods_tables():
-    return jsonify({"data": ODS_TABLES})
+    try:
+        cfg = get_env_config()
+        with get_mysql_session(cfg) as conn:
+            with conn.cursor() as cursor:
+                tables = _list_layer_tables(cursor, "ods")
+        return jsonify({"data": tables})
+    except Exception as exc:
+        return _json_error(str(exc))
 
 
 @app.route("/api/ods/rows", methods=["GET"])
@@ -661,14 +1093,16 @@ def api_ods_rows():
     try:
         table = request.args.get("table", "ods_daily")
         page = int(request.args.get("page", 1))
+        page_size = _normalize_page_size(request.args.get("page_size"))
         search_ts_code = request.args.get("search_ts_code") or None
         search_trade_date = request.args.get("search_trade_date") or None
-        search_trade_date_int = int(search_trade_date) if search_trade_date else None
-        columns, rows, total = _fetch_ods_rows(
+        columns, rows, total = _fetch_layer_rows(
+            "ods",
             table,
             page,
+            page_size,
             search_ts_code,
-            search_trade_date_int,
+            search_trade_date,
         )
         return jsonify(
             {
@@ -677,10 +1111,66 @@ def api_ods_rows():
                     "rows": [list(row) for row in rows],
                     "total": total,
                     "page": page,
-                    "page_size": 50,
+                    "page_size": page_size,
                 }
             }
         )
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+@app.route("/api/data/tables", methods=["GET"])
+def api_data_tables():
+    try:
+        layer = _normalize_layer(request.args.get("layer"))
+        cfg = get_env_config()
+        with get_mysql_session(cfg) as conn:
+            with conn.cursor() as cursor:
+                tables = _list_layer_tables(cursor, layer)
+        return jsonify({"data": tables})
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+    except Exception as exc:
+        return _json_error(str(exc))
+
+
+@app.route("/api/data/rows", methods=["GET"])
+def api_data_rows():
+    try:
+        layer = _normalize_layer(request.args.get("layer"))
+        table = (request.args.get("table") or "").strip()
+        if not table:
+            return _json_error("table is required", 400)
+        page = int(request.args.get("page", 1))
+        page_size = _normalize_page_size(request.args.get("page_size"))
+        search_ts_code = request.args.get("search_ts_code") or None
+        search_trade_date = request.args.get("search_trade_date") or None
+
+        columns, rows, total = _fetch_layer_rows(
+            layer=layer,
+            table=table,
+            page=page,
+            page_size=page_size,
+            search_ts_code=search_ts_code,
+            search_trade_date=search_trade_date,
+        )
+        return jsonify(
+            {
+                "data": {
+                    "columns": columns,
+                    "rows": [list(row) for row in rows],
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "layer": layer,
+                    "table": table,
+                }
+            }
+        )
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
     except Exception as exc:
         return _json_error(str(exc))
 
@@ -1091,6 +1581,8 @@ def api_scores_compare():
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve(path):
+    if path.startswith("api/"):
+        return _json_error(f"API route not found: /{path}", 404)
     if path != "" and (DIST_DIR / path).exists():
         return send_from_directory(DIST_DIR, path)
     else:

@@ -32,7 +32,18 @@ export const getJson = async <T>(path: string, params?: QueryParams): Promise<T>
   if (!response.ok) {
     throw new Error(await parseError(response));
   }
-  return (await response.json()) as T;
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    const bodyPreview = (await response.text()).slice(0, 120).replace(/\s+/g, ' ');
+    throw new Error(
+      `API returned non-JSON response for ${path} (content-type: ${contentType || 'unknown'}): ${bodyPreview}`,
+    );
+  }
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    throw new Error(`Failed to parse JSON for ${path}: ${String(error)}`);
+  }
 };
 
 export const postJson = async <T>(
@@ -50,9 +61,29 @@ export const postJson = async <T>(
   return (await response.json()) as T;
 };
 
-export const deleteJson = async <T>(path: string): Promise<T> => {
+export const patchJson = async <T>(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<T> => {
+  const response = await fetch(buildUrl(path), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as T;
+};
+
+export const deleteJson = async <T>(
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<T> => {
   const response = await fetch(buildUrl(path), {
     method: 'DELETE',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) {
     throw new Error(await parseError(response));

@@ -674,19 +674,44 @@ def run_incremental(
             conn.commit()
         try:
             with conn.cursor() as cursor:
+                def _table_max_date(table_name: str) -> Optional[int]:
+                    cursor.execute(f"SELECT MAX(trade_date) FROM {table_name}")
+                    row = cursor.fetchone()
+                    return int(row[0]) if row and row[0] else None
+
                 if start_date:
                     last_date = start_date - 1
                 else:
-                    last_date = get_watermark(cursor, "ods_daily")
-                
+                    watermark_daily = get_watermark(cursor, "ods_daily")
+                    daily_max_date = _table_max_date("ods_daily")
+                    # Self-heal when watermark is ahead of real table data.
+                    if daily_max_date is not None and (
+                        watermark_daily is None or watermark_daily > daily_max_date
+                    ):
+                        logger.warning(
+                            "ods_daily watermark (%s) is inconsistent with table max (%s), "
+                            "resetting watermark baseline.",
+                            watermark_daily,
+                            daily_max_date,
+                        )
+                        daily_basic_max_date = _table_max_date("ods_daily_basic") or daily_max_date
+                        adj_factor_max_date = _table_max_date("ods_adj_factor") or daily_max_date
+                        ensure_watermark(cursor, "ods_daily", daily_max_date)
+                        ensure_watermark(cursor, "ods_daily_basic", daily_basic_max_date)
+                        ensure_watermark(cursor, "ods_adj_factor", adj_factor_max_date)
+                        conn.commit()
+                        last_date = daily_max_date
+                    else:
+                        last_date = watermark_daily
+
                 if last_date is None:
                     raise RuntimeError("missing watermark for ods_daily")
-                
+
                 if start_date:
                     trade_dates = list_trade_dates(cursor, start_date, end_date)
                 else:
                     trade_dates = list_trade_dates_after(cursor, last_date, end_date)
-                
+
                 # Cap dates at today to avoid processing future calendar dates
                 from datetime import datetime
                 today_int = int(datetime.now().strftime('%Y%m%d'))
@@ -700,10 +725,16 @@ def run_incremental(
                 with conn.cursor() as cursor:
                     try:
                         daily = fetch_daily(pro, limiter, trade_date)
+                        if daily is None or daily.empty:
+                            raise RuntimeError(f"ods_daily returned empty for trade_date={trade_date}")
                         load_ods_daily(cursor, daily)
                         daily_basic = fetch_daily_basic(pro, limiter, trade_date)
+                        if daily_basic is None or daily_basic.empty:
+                            raise RuntimeError(f"ods_daily_basic returned empty for trade_date={trade_date}")
                         load_ods_daily_basic(cursor, daily_basic)
                         adj_factor = fetch_adj_factor(pro, limiter, trade_date)
+                        if adj_factor is None or adj_factor.empty:
+                            raise RuntimeError(f"ods_adj_factor returned empty for trade_date={trade_date}")
                         load_ods_adj_factor(cursor, adj_factor)
                         update_watermark(cursor, "ods_daily", trade_date, "SUCCESS")
                         update_watermark(cursor, "ods_daily_basic", trade_date, "SUCCESS")
@@ -716,8 +747,9 @@ def run_incremental(
                         monthly = fetch_monthly(pro, limiter, trade_date)
                         load_ods_monthly(cursor, monthly)
                         update_watermark(cursor, "ods_monthly", trade_date, "SUCCESS")
-                        
+
                         conn.commit()
+                        last_date = trade_date
                     except Exception as exc:
                         update_watermark(cursor, "ods_daily", last_date, "FAILED", str(exc))
                         update_watermark(cursor, "ods_daily_basic", last_date, "FAILED", str(exc))

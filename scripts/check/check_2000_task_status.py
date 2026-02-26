@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,12 +30,13 @@ class RunStatus:
     failed_line: int | None
     active_process_count: int
     active_processes: list[str]
+    latest_log_timestamp: str | None
     db_running_count: int | None
     db_latest_rows: list[dict[str, Any]] | None
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Check whether the 17:00 cron task has completed.")
+    parser = argparse.ArgumentParser(description="Check whether the 20:00 cron task has completed.")
     parser.add_argument(
         "--date",
         default=datetime.now().strftime("%Y-%m-%d"),
@@ -43,8 +44,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-file",
-        default="logs/cron_1700.log",
-        help="Path to the 17:00 cron log file.",
+        default="logs/cron_2000.log",
+        help="Path to the 20:00 cron log file.",
     )
     parser.add_argument(
         "--config",
@@ -61,6 +62,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Output machine-readable JSON.",
     )
+    parser.add_argument(
+        "--running-grace-minutes",
+        type=int,
+        default=30,
+        help="If no terminal marker, infer RUNNING when latest log activity is within this window.",
+    )
     return parser.parse_args()
 
 
@@ -76,8 +83,8 @@ def _find_log_segment(lines: list[str], target_date: str) -> tuple[int | None, i
     success_line_no: int | None = None
     failed_line_no: int | None = None
 
-    # First timestamp of the 17:00 run on target day.
-    start_re = re.compile(rf"^{re.escape(target_date)} 17:00:\d{{2}},\d+ ")
+    # First timestamp of the 20:00 run on target day.
+    start_re = re.compile(rf"^{re.escape(target_date)} 20:00:\d{{2}},\d+ ")
     for idx, line in enumerate(lines, start=1):
         if start_re.match(line):
             start_line_no = idx
@@ -96,6 +103,22 @@ def _find_log_segment(lines: list[str], target_date: str) -> tuple[int | None, i
     return start_line_no, success_line_no, failed_line_no
 
 
+def _extract_latest_timestamp(lines: list[str], start_line_no: int | None) -> datetime | None:
+    if start_line_no is None:
+        return None
+    ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:,\d+)?\b")
+    latest: datetime | None = None
+    for line in lines[start_line_no - 1 :]:
+        matched = ts_re.match(line)
+        if not matched:
+            continue
+        try:
+            latest = datetime.strptime(matched.group(1), "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return latest
+
+
 def _detect_active_processes() -> list[str]:
     try:
         proc = subprocess.run(["ps", "-ef"], capture_output=True, text=True, check=False)
@@ -106,15 +129,18 @@ def _detect_active_processes() -> list[str]:
 
     matches: list[str] = []
     for line in proc.stdout.splitlines():
-        if "check_1700_task_status.py" in line:
+        if "check_2000_task_status.py" in line:
             continue
-        if "cron_1700.log" in line and "run_with_retry.py" in line:
+        if "cron_2000.log" in line and "run_with_retry.py" in line:
             matches.append(line.strip())
             continue
-        if "scripts/sync/run_1700_pipeline.py" in line:
+        if "scripts/sync/run_2000_pipeline.py" in line:
             matches.append(line.strip())
             continue
         if "scripts/sync/run_daily_pipeline.py" in line and "--lenient" in line:
+            matches.append(line.strip())
+            continue
+        if "scripts/schedule/run_2000_task.sh" in line:
             matches.append(line.strip())
     return matches
 
@@ -147,8 +173,9 @@ def _fetch_db_rows(config_path: Path, target_date: str) -> tuple[int | None, lis
         return None, None
 
     try:
-        start_ts = f"{target_date} 17:00:00"
-        end_ts = f"{target_date} 20:00:00"
+        date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+        start_ts = f"{target_date} 20:00:00"
+        end_ts = (date_obj + timedelta(days=1)).strftime("%Y-%m-%d 08:30:00")
         with conn.cursor() as cursor:
             cursor.execute(
                 """
@@ -179,18 +206,25 @@ def _decide_state(
     success_line: int | None,
     failed_line: int | None,
     active_processes: list[str],
+    latest_log_ts: datetime | None,
+    running_grace_minutes: int,
 ) -> tuple[str, str]:
     if start_line is None:
-        return "NOT_TRIGGERED", "No 17:00 log entry found for target date."
+        return "NOT_TRIGGERED", "No 20:00 log entry found for target date."
 
     if success_line and (not failed_line or success_line > failed_line):
-        return "COMPLETED", "Found success marker after the 17:00 run started."
+        return "COMPLETED", "Found success marker after the 20:00 run started."
 
     if failed_line and (not success_line or failed_line > success_line):
-        return "FAILED", "Found terminal failure marker for the 17:00 run."
+        return "FAILED", "Found terminal failure marker for the 20:00 run."
 
     if active_processes:
         return "RUNNING", "No terminal marker yet, and related pipeline process is active."
+
+    if latest_log_ts:
+        elapsed = datetime.now() - latest_log_ts
+        if elapsed <= timedelta(minutes=max(1, running_grace_minutes)):
+            return "RUNNING", "No terminal marker yet; inferred RUNNING from recent log activity."
 
     return "UNKNOWN", "Run started but no terminal marker and no active process."
 
@@ -208,6 +242,7 @@ def _print_text(result: RunStatus) -> None:
         print("active_processes:")
         for line in result.active_processes:
             print(f"  - {line}")
+    print(f"latest_log_timestamp: {result.latest_log_timestamp}")
     if result.db_running_count is not None:
         print(f"db_running_count: {result.db_running_count}")
     if result.db_latest_rows:
@@ -241,6 +276,7 @@ def main() -> int:
             failed_line=None,
             active_process_count=0,
             active_processes=[],
+            latest_log_timestamp=None,
             db_running_count=None,
             db_latest_rows=None,
         )
@@ -252,6 +288,7 @@ def main() -> int:
 
     lines = log_file.read_text(errors="ignore").splitlines()
     start_line, success_line, failed_line = _find_log_segment(lines, args.date)
+    latest_log_ts = _extract_latest_timestamp(lines, start_line)
     active_processes = _detect_active_processes()
 
     db_running_count: int | None = None
@@ -266,6 +303,8 @@ def main() -> int:
         success_line=success_line,
         failed_line=failed_line,
         active_processes=active_processes,
+        latest_log_ts=latest_log_ts,
+        running_grace_minutes=args.running_grace_minutes,
     )
 
     result = RunStatus(
@@ -278,6 +317,7 @@ def main() -> int:
         failed_line=failed_line,
         active_process_count=len(active_processes),
         active_processes=active_processes,
+        latest_log_timestamp=latest_log_ts.strftime("%Y-%m-%d %H:%M:%S") if latest_log_ts else None,
         db_running_count=db_running_count,
         db_latest_rows=db_latest_rows,
     )

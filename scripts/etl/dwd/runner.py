@@ -325,10 +325,35 @@ def run_incremental(start_date: Optional[int] = None, end_date: Optional[int] = 
             conn.commit()
         try:
             with conn.cursor() as cursor:
+                def _table_max_date(table_name: str) -> Optional[int]:
+                    cursor.execute(f"SELECT MAX(trade_date) FROM {table_name}")
+                    row = cursor.fetchone()
+                    return int(row[0]) if row and row[0] else None
+
                 if start_date:
                     last_date = start_date - 1
                 else:
-                    last_date = get_watermark(cursor, "dwd_daily")
+                    dwd_watermark = get_watermark(cursor, "dwd_daily")
+                    dwd_max_date = _table_max_date("dwd_daily")
+                    # Self-heal when watermark is ahead of real table data.
+                    if dwd_max_date is not None and (
+                        dwd_watermark is None or dwd_watermark > dwd_max_date
+                    ):
+                        logging.warning(
+                            "dwd watermark (%s) is inconsistent with dwd_daily max (%s), "
+                            "resetting watermark baseline.",
+                            dwd_watermark,
+                            dwd_max_date,
+                        )
+                        dwd_basic_max = _table_max_date("dwd_daily_basic") or dwd_max_date
+                        dwd_adj_max = _table_max_date("dwd_adj_factor") or dwd_max_date
+                        ensure_watermark(cursor, "dwd_daily", dwd_max_date)
+                        ensure_watermark(cursor, "dwd_daily_basic", dwd_basic_max)
+                        ensure_watermark(cursor, "dwd_adj_factor", dwd_adj_max)
+                        conn.commit()
+                        last_date = dwd_max_date
+                    else:
+                        last_date = dwd_watermark
 
                 if last_date is None:
                     cursor.execute("SELECT MAX(trade_date) FROM dwd_daily")
@@ -370,6 +395,20 @@ def run_incremental(start_date: Optional[int] = None, end_date: Optional[int] = 
                 logging.info(f"Processing trade_date={trade_date}")
                 with conn.cursor() as cursor:
                     try:
+                        # Source ODS tables must be ready for this trade date.
+                        missing_sources = []
+                        for table_name in ("ods_daily", "ods_daily_basic", "ods_adj_factor"):
+                            cursor.execute(
+                                f"SELECT 1 FROM {table_name} WHERE trade_date=%s LIMIT 1",
+                                (trade_date,),
+                            )
+                            if cursor.fetchone() is None:
+                                missing_sources.append(table_name)
+                        if missing_sources:
+                            raise RuntimeError(
+                                f"missing source rows for trade_date={trade_date}: {', '.join(missing_sources)}"
+                            )
+
                         # Get previous trade date
                         cursor.execute("SELECT MAX(trade_date) FROM dwd_daily WHERE trade_date < %s", (trade_date,))
                         res = cursor.fetchone()
@@ -388,6 +427,7 @@ def run_incremental(start_date: Optional[int] = None, end_date: Optional[int] = 
                         update_watermark(cursor, "dwd_daily_basic", trade_date, "SUCCESS")
                         update_watermark(cursor, "dwd_adj_factor", trade_date, "SUCCESS")
                         conn.commit()
+                        last_date = trade_date
                         logging.info(f"  Completed trade_date={trade_date}")
                     except Exception as exc:
                         update_watermark(cursor, "dwd_daily", last_date, "FAILED", str(exc))

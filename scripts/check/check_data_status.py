@@ -118,10 +118,18 @@ def _apply_config_args(args: argparse.Namespace) -> None:
 
 
 def _latest_trade_date(cursor) -> Optional[int]:
+    from datetime import datetime, time as dtime
+
+    now = datetime.now()
+    today_int = int(now.strftime("%Y%m%d"))
+    include_today = now.time() >= dtime(16, 0)
+    op = "<=" if include_today else "<"
+
     cursor.execute(
         "SELECT MAX(cal_date) FROM dim_trade_cal "
         "WHERE exchange='SSE' AND is_open=1 "
-        "AND cal_date <= DATE_FORMAT(CURDATE(), '%Y%m%d')"
+        f"AND cal_date {op} %s",
+        (today_int,),
     )
     row = cursor.fetchone()
     if row and row[0]:
@@ -155,19 +163,39 @@ def _status_for_date(max_date: Optional[int], threshold: Optional[int]) -> str:
 
 def _resolve_threshold(
     *,
+    cursor,
     table: TableCheck,
     expected_trade_date: Optional[int],
     args: argparse.Namespace,
 ) -> Optional[int]:
     threshold = args.min_date or expected_trade_date
+
+    # Apply category-specific overrides first.
+    if table.category == "ods" and args.min_ods_date is not None and table.date_column == "trade_date":
+        threshold = args.min_ods_date
+    elif table.category == "features":
+        if table.date_column == "trade_date" and args.min_feature_date is not None:
+            threshold = args.min_feature_date
+        elif table.date_column == "ann_date" and args.min_fina_ann_date is not None:
+            threshold = args.min_fina_ann_date
+    elif table.category == "financial":
+        if table.date_column == "ann_date":
+            threshold = args.min_fina_ann_date
+        elif table.date_column == "trade_date":
+            threshold = args.min_fina_trade_date if args.min_fina_trade_date is not None else threshold
     
     if args.ignore_today and threshold is not None:
         from datetime import datetime
         today_int = int(datetime.now().strftime("%Y%m%d"))
         if threshold == today_int:
-            # If threshold is today and we ignore today, we don't have a strict threshold for 'OK'
-            # We can return None or a 'soft' threshold. Let's return None to skip STALE check.
-            return None
+            # In lenient mode, allow T-1 only instead of disabling stale checks entirely.
+            cursor.execute(
+                "SELECT MAX(cal_date) FROM dim_trade_cal "
+                "WHERE exchange='SSE' AND is_open=1 AND cal_date < %s",
+                (today_int,),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] else None
             
     return threshold
 
@@ -193,6 +221,7 @@ def _print_table_rows(
     for table in tables:
         max_date, total_rows, updated_at = _fetch_table_stats(cursor, table)
         threshold = _resolve_threshold(
+            cursor=cursor,
             table=table,
             expected_trade_date=expected_trade_date,
             args=args,

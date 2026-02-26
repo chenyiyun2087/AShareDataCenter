@@ -85,6 +85,7 @@ def main() -> None:
     checks = []
     expected_date = args.expected_trade_date
     today_str = datetime.now().strftime("%Y%m%d")
+    previous_trade_date = None
 
     with get_mysql_connection(cfg) as conn:
         with conn.cursor() as cursor:
@@ -108,6 +109,14 @@ def main() -> None:
                 ]
             )
 
+            if args.ignore_today and str(expected_date) == today_str:
+                previous_trade_date = fetch_single_value(
+                    cursor,
+                    "SELECT MAX(cal_date) FROM dim_trade_cal "
+                    "WHERE exchange='SSE' AND is_open=1 AND cal_date < %s",
+                    (expected_date,),
+                )
+
     print(f"Expected latest trade date: {expected_date}")
     print("Latest dates:")
     failures = []
@@ -121,9 +130,9 @@ def main() -> None:
             continue
         
         if value != expected_date:
-            # If ignore-today is set, and expected_date is today, allow data to be from previous trading day
+            # In lenient mode, allow exactly T-1 when expected date is today.
             if args.ignore_today and str(expected_date) == today_str:
-                if value is not None and value < expected_date:
+                if value is not None and previous_trade_date is not None and value == previous_trade_date:
                     continue
             failures.append(label)
 

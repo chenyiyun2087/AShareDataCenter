@@ -384,6 +384,9 @@ def run_full(start_date: int, end_date: int | None = None) -> None:
             
             if not trade_dates:
                 logging.info("No trade dates to process.")
+                with conn.cursor() as cursor:
+                    log_run_end(cursor, run_id, "SUCCESS")
+                    conn.commit()
                 return
 
             total_dates = len(trade_dates)
@@ -429,10 +432,30 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
             conn.commit()
         try:
             with conn.cursor() as cursor:
+                def _table_max_date(table_name: str) -> int | None:
+                    cursor.execute(f"SELECT MAX(trade_date) FROM {table_name}")
+                    row = cursor.fetchone()
+                    return int(row[0]) if row and row[0] else None
+
                 if start_date:
                     last_date = start_date - 1
                 else:
-                    last_date = get_watermark(cursor, "dws")
+                    dws_watermark = get_watermark(cursor, "dws")
+                    dws_max_date = _table_max_date("dws_price_adj_daily")
+                    if dws_max_date is not None and (
+                        dws_watermark is None or dws_watermark > dws_max_date
+                    ):
+                        logging.warning(
+                            "dws watermark (%s) is inconsistent with dws_price_adj_daily max (%s), "
+                            "resetting watermark baseline.",
+                            dws_watermark,
+                            dws_max_date,
+                        )
+                        ensure_watermark(cursor, "dws", dws_max_date)
+                        conn.commit()
+                        last_date = dws_max_date
+                    else:
+                        last_date = dws_watermark
 
                 if last_date is None:
                     raise RuntimeError("missing watermark for dws")
@@ -447,8 +470,25 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
                 today_int = int(datetime.now().strftime('%Y%m%d'))
                 trade_dates = [d for d in trade_dates if d <= today_int]
 
+                if trade_dates:
+                    cursor.execute(
+                        "SELECT DISTINCT trade_date FROM dwd_daily WHERE trade_date BETWEEN %s AND %s",
+                        (trade_dates[0], trade_dates[-1]),
+                    )
+                    available_dates = {int(row[0]) for row in cursor.fetchall()}
+                    missing_dates = [d for d in trade_dates if d not in available_dates]
+                    if missing_dates:
+                        raise RuntimeError(
+                            "dwd_daily missing source dates for dws: "
+                            + ", ".join(map(str, missing_dates[:5]))
+                            + (" ..." if len(missing_dates) > 5 else "")
+                        )
+
             if not trade_dates:
                 logging.info("No new trade dates to process.")
+                with conn.cursor() as cursor:
+                    log_run_end(cursor, run_id, "SUCCESS")
+                    conn.commit()
                 return
 
             with conn.cursor() as cursor:
@@ -475,6 +515,7 @@ def run_incremental(start_date: int | None = None, end_date: int | None = None) 
                             if not disable_watermark:
                                 update_watermark(cursor, "dws", trade_date, "SUCCESS")
                             conn.commit()
+                            last_date = trade_date
                         except Exception as exc:
                             if not disable_watermark:
                                 update_watermark(cursor, "dws", last_date, "FAILED", str(exc))
@@ -502,6 +543,49 @@ def run_fina_incremental(start_date: int, end_date: int) -> None:
             with conn.cursor() as cursor:
                 load_dwd_fina_indicator(cursor, start_date, end_date)
                 update_watermark(cursor, "dws_fina_indicator", end_date, "SUCCESS")
+                conn.commit()
+
+            with conn.cursor() as cursor:
+                log_run_end(cursor, run_id, "SUCCESS")
+                conn.commit()
+        except Exception as exc:
+            with conn.cursor() as cursor:
+                log_run_end(cursor, run_id, "FAILED", str(exc))
+                conn.commit()
+            raise
+
+
+def run_leverage_sentiment_incremental(start_date: int, end_date: int) -> None:
+    """Run only dws_leverage_sentiment for a date range."""
+    cfg = get_env_config()
+    with get_mysql_session(cfg) as conn:
+        with conn.cursor() as cursor:
+            run_id = log_run_start(cursor, "dws_leverage_sentiment", "incremental")
+            conn.commit()
+        try:
+            with conn.cursor() as cursor:
+                trade_dates = list_trade_dates(cursor, start_date, end_date)
+                if not trade_dates:
+                    log_run_end(cursor, run_id, "SUCCESS")
+                    conn.commit()
+                    return
+
+                cursor.execute(
+                    "SELECT DISTINCT trade_date FROM dwd_margin_sentiment "
+                    "WHERE trade_date BETWEEN %s AND %s",
+                    (trade_dates[0], trade_dates[-1]),
+                )
+                available_dates = {int(row[0]) for row in cursor.fetchall()}
+                missing_dates = [d for d in trade_dates if d not in available_dates]
+                if missing_dates:
+                    raise RuntimeError(
+                        "dwd_margin_sentiment missing source dates for dws_leverage_sentiment: "
+                        + ", ".join(map(str, missing_dates[:5]))
+                        + (" ..." if len(missing_dates) > 5 else "")
+                    )
+
+                _run_leverage_sentiment(cursor, start_date, end_date)
+                ensure_watermark(cursor, "dws_leverage_sentiment", end_date)
                 conn.commit()
 
             with conn.cursor() as cursor:
