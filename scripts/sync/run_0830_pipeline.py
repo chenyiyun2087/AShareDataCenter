@@ -19,13 +19,29 @@ from etl.base.runtime import get_env_config, get_mysql_session, get_tushare_limi
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run 08:30 focused ETL pipeline (margin-first).")
+    parser = argparse.ArgumentParser(
+        description="Run 08:30 completion ETL pipeline (repair lagging feature sources + rebuild downstream tables)."
+    )
     parser.add_argument("--config", default=None, help="Path to etl.ini")
     parser.add_argument("--token", default=None)
     parser.add_argument("--rate-limit", type=int, default=None)
     parser.add_argument("--expected-trade-date", type=int, default=None)
     parser.add_argument("--start-date", type=int, default=None)
     parser.add_argument("--end-date", type=int, default=None)
+    parser.add_argument(
+        "--feature-apis",
+        default="moneyflow,moneyflow_ths,cyq_perf,stk_factor",
+        help="Comma-separated ODS feature APIs to repair before DWD/DWS rebuild.",
+    )
+    parser.add_argument(
+        "--feature-rate-limit",
+        type=int,
+        default=None,
+        help="Rate limit for feature API calls. Defaults to --rate-limit or config default.",
+    )
+    parser.add_argument("--feature-cyq-rate-limit", type=int, default=180)
+    parser.add_argument("--feature-cyq-chunk-days", type=int, default=5)
+    parser.add_argument("--feature-stk-factor-rate-limit", type=int, default=200)
     parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
 
@@ -117,6 +133,8 @@ def main() -> None:
         raise RuntimeError("start_date cannot be greater than end_date")
 
     rate_limit = args.rate_limit or get_tushare_limit()
+    feature_rate_limit = args.feature_rate_limit or rate_limit
+
     python = sys.executable
     base_cmd = [python]
     base_config = ["--config", args.config] if args.config else []
@@ -126,25 +144,54 @@ def main() -> None:
 
     print(
         f"Resolved expected_trade_date={expected_trade_date}, "
-        f"start_date={start_date}, end_date={end_date}, rate_limit={rate_limit}"
+        f"start_date={start_date}, end_date={end_date}, "
+        f"rate_limit={rate_limit}, feature_rate_limit={feature_rate_limit}"
     )
 
+    # 08:30 should focus on T+1 completion; rely on prior ODS success rather than forcing refetch.
+    _assert_table_has_date("ods_daily", end_date)
+    _assert_table_has_date("ods_daily_basic", end_date)
+    _assert_table_has_date("ods_adj_factor", end_date)
+
     _run_step(
-        "ODS incremental",
+        "ODS market features backfill",
         base_cmd
         + [
-            script("scripts/sync/run_ods.py"),
-            "--mode",
-            "incremental",
+            script("scripts/sync/run_ods_features.py"),
             "--start-date",
             str(start_date),
             "--end-date",
             str(end_date),
+            "--apis",
+            args.feature_apis,
             "--rate-limit",
-            str(rate_limit),
+            str(feature_rate_limit),
+            "--cyq-rate-limit",
+            str(args.feature_cyq_rate_limit),
+            "--cyq-chunk-days",
+            str(args.feature_cyq_chunk_days),
+            "--stk-factor-rate-limit",
+            str(args.feature_stk_factor_rate_limit),
         ]
         + base_config
         + ["--token", token],
+        args.debug,
+    )
+
+    _run_step(
+        "Check ODS market features",
+        base_cmd
+        + [
+            script("scripts/check/check_ods_features.py"),
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+            "--tables",
+            "ods_moneyflow,ods_moneyflow_ths,ods_cyq_perf,ods_stk_factor",
+            "--fail-on-missing",
+        ]
+        + base_config,
         args.debug,
     )
 
@@ -170,6 +217,8 @@ def main() -> None:
 
     _assert_table_has_date("ods_margin", end_date)
     _assert_table_has_date("ods_margin_detail", end_date)
+    _assert_table_has_date("ods_moneyflow", end_date)
+    _assert_table_has_date("ods_cyq_perf", end_date)
 
     _run_step(
         "DWD incremental",
@@ -187,6 +236,7 @@ def main() -> None:
         args.debug,
     )
     _assert_table_has_date("dwd_margin_sentiment", end_date)
+    _assert_table_has_date("dwd_chip_stability", end_date)
 
     _run_step(
         "DWS leverage sentiment",
@@ -204,7 +254,35 @@ def main() -> None:
         + base_config,
         args.debug,
     )
-    _assert_table_has_date("dws_leverage_sentiment", end_date)
+
+    _run_step(
+        "DWS target tables (capital/chip)",
+        base_cmd
+        + [
+            script("scripts/sync/run_dws_target_tables.py"),
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
+        + base_config,
+        args.debug,
+    )
+
+    _run_step(
+        "DWS full status check",
+        base_cmd
+        + [
+            script("scripts/check/check_data_status.py"),
+            "--categories",
+            "dws",
+            "--fail-on-stale",
+            "--expected-trade-date",
+            str(end_date),
+        ]
+        + base_config,
+        args.debug,
+    )
 
     _run_step(
         "ADS incremental",
@@ -221,6 +299,9 @@ def main() -> None:
         + base_config,
         args.debug,
     )
+    _assert_table_has_date("dws_leverage_sentiment", end_date)
+    _assert_table_has_date("dws_capital_flow", end_date)
+    _assert_table_has_date("dws_chip_dynamics", end_date)
 
     _run_step(
         "Check DWD/DWS/ADS",
@@ -237,7 +318,7 @@ def main() -> None:
         args.debug,
     )
 
-    print("08:30 focused pipeline completed successfully.")
+    print("08:30 completion pipeline completed successfully.")
 
 
 if __name__ == "__main__":

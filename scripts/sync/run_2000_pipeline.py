@@ -25,6 +25,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token", default=None)
     parser.add_argument("--rate-limit", type=int, default=None)
     parser.add_argument(
+        "--feature-apis",
+        default="moneyflow,cyq_chips,cyq_perf,stk_factor",
+        help="Comma-separated ODS feature APIs to enforce at 20:00.",
+    )
+    parser.add_argument(
+        "--feature-rate-limit",
+        type=int,
+        default=None,
+        help="Rate limit for feature API calls. Defaults to --rate-limit or config default.",
+    )
+    parser.add_argument("--feature-cyq-rate-limit", type=int, default=180)
+    parser.add_argument("--feature-cyq-chunk-days", type=int, default=5)
+    parser.add_argument("--feature-stk-factor-rate-limit", type=int, default=200)
+    parser.add_argument(
         "--dividend-rate-limit",
         type=int,
         default=480,
@@ -132,6 +146,7 @@ def main() -> None:
         raise RuntimeError("start_date cannot be greater than end_date")
 
     rate_limit = args.rate_limit or get_tushare_limit()
+    feature_rate_limit = args.feature_rate_limit or rate_limit
     dividend_rate_limit = args.dividend_rate_limit
     if dividend_rate_limit <= 0:
         raise RuntimeError("dividend_rate_limit must be > 0")
@@ -162,7 +177,8 @@ def main() -> None:
     print(
         f"Resolved expected_trade_date={expected_trade_date}, start_date={start_date}, "
         f"end_date={end_date}, fina_start={fina_start}, fina_end={fina_end}, "
-        f"rate_limit={rate_limit}, dividend_rate_limit={dividend_rate_limit}"
+        f"rate_limit={rate_limit}, feature_rate_limit={feature_rate_limit}, "
+        f"dividend_rate_limit={dividend_rate_limit}"
     )
 
     _run_step(
@@ -239,6 +255,113 @@ def main() -> None:
     _run_step(
         "Check fina status",
         check_fina_cmd,
+        args.debug,
+    )
+
+    _run_step(
+        "ODS features incremental",
+        base_cmd
+        + [
+            script("scripts/sync/run_ods_features.py"),
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+            "--apis",
+            args.feature_apis,
+            "--rate-limit",
+            str(feature_rate_limit),
+            "--cyq-rate-limit",
+            str(args.feature_cyq_rate_limit),
+            "--cyq-chunk-days",
+            str(args.feature_cyq_chunk_days),
+            "--stk-factor-rate-limit",
+            str(args.feature_stk_factor_rate_limit),
+        ]
+        + base_config
+        + ["--token", token],
+        args.debug,
+    )
+
+    # Strict check for 20:00 retry gate: if today's feature data is not ready, fail this run.
+    _run_step(
+        "Check ODS features strict",
+        base_cmd
+        + [
+            script("scripts/check/check_ods_features.py"),
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+            "--tables",
+            "ods_moneyflow,ods_cyq_chips,ods_cyq_perf,ods_stk_factor",
+            "--fail-on-missing",
+        ]
+        + base_config,
+        args.debug,
+    )
+
+    _run_step(
+        "DWD incremental",
+        base_cmd
+        + [
+            script("scripts/sync/run_dwd.py"),
+            "--mode",
+            "incremental",
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
+        + base_config,
+        args.debug,
+    )
+
+    _run_step(
+        "DWS incremental",
+        base_cmd
+        + [
+            script("scripts/sync/run_dws.py"),
+            "--mode",
+            "incremental",
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
+        + base_config,
+        args.debug,
+    )
+
+    _run_step(
+        "ADS incremental",
+        base_cmd
+        + [
+            script("scripts/sync/run_ads.py"),
+            "--mode",
+            "incremental",
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
+        + base_config,
+        args.debug,
+    )
+
+    # Strict end-to-end validation for 20:00 batch.
+    _run_step(
+        "Check DWD/DWS/ADS strict",
+        base_cmd
+        + [
+            script("scripts/check/check_data_status.py"),
+            "--categories",
+            "dwd,dws,ads",
+            "--fail-on-stale",
+            "--expected-trade-date",
+            str(expected_trade_date),
+        ]
+        + base_config,
         args.debug,
     )
 

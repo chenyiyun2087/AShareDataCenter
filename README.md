@@ -262,23 +262,78 @@ npm run dev
 
 ### 批量任务安排建议 (Batch Schedule Suggestions)
 
-为适配 TuShare 数据发布节奏，流水线分为三个核心阶段执行：
+为适配 TuShare 数据发布时间，建议按交易日 `T` 拆成三段串行批次。每段只做该时点需要的最小任务，失败后按批次补跑，避免整链路重复。
 
-#### 1. 下午同步 (17:00 以后) - 基础行情阶段
-同步基础行情、核心特征（不含两融）、A股核心指数与 DWD/DWS/ADS 基础计算。
-- **命令**: `python scripts/sync/run_1700_pipeline.py --config config/etl.ini --lenient`
-- **说明**: 使用宽容模式 (`--lenient`)，适合收盘后快速产出当日主链路结果。
+#### 0. 批次公共规则（适用于 17:00 / 20:00 / 08:30）
 
-#### 2. 晚间强化 (20:00 以后) - 增强与完整性阶段
-执行增强链路：`dividend` + 财务增量（ODS/DWD fina）+ 数据完整性巡检。
-- **命令**: `python scripts/sync/run_2000_pipeline.py --config config/etl.ini --lenient`
-- **日志**: 详细任务过程记录在 `logs/cron_2000.log`。
-- **说明**: 与 17:00 批次解耦，减少整链路重复运行。
+- `expected_trade_date` 默认由脚本自动解析：
+  - 16:00 前取上一个交易日；
+  - 16:00 后可取当日交易日。
+- 所有批次都支持显式覆盖日期：
+  - `--start-date YYYYMMDD --end-date YYYYMMDD --expected-trade-date YYYYMMDD`
+- 生产建议统一通过 `config/etl.ini` 提供数据库与令牌配置，命令层只覆盖特殊参数。
 
-#### 3. 完整同步 (次日 T+1 08:30 以前) - 最终闭环阶段
-补齐最晚发布的融资融券数据，并完成下游 DWD/DWS/ADS 的闭环更新。
-- **命令**: `python scripts/sync/run_0830_pipeline.py --config config/etl.ini`
-- **说明**: 聚焦两融 T+1 补全与下游同步。
+#### 1. 17:00 核心批次（主链路快出数）
+
+- 命令：
+  - `python scripts/sync/run_1700_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN --lenient`
+- 实际执行顺序（与脚本一致）：
+  - ODS 增量：`ods_daily / ods_daily_basic / ods_adj_factor`
+  - ODS 校验：`check_ods.py`
+  - ODS 特征增量：`moneyflow,moneyflow_ths,cyq_chips,cyq_perf,stk_factor`
+  - 特征校验：`check_ods_features.py --fail-on-missing`
+  - 指数专题增量与校验：`run_index_suite.py` + `check_index_suite_status.py`
+  - DWD 增量 + 校验
+  - DWS 增量 + 校验
+  - ADS 增量 + 校验
+- 目的：
+  - 在收盘后尽快产出当日主链路数据（不含 dividend/fina 增强和 T+1 两融补全）。
+
+#### 2. 20:00 增强批次（财务/分红 + 严格闭环）
+
+- 命令：
+  - `python scripts/sync/run_2000_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN --lenient`
+- 实际执行顺序（与脚本一致）：
+  - ODS 分红增量：`run_ods.py --dividend --only-dividend`
+  - ODS 财务增量：`run_ods.py --only-fina`
+  - DWD 财务增量：`run_dwd.py --only-fina`
+  - 财务状态检查：`check_data_status.py --categories financial`
+  - ODS 特征再同步：`moneyflow,cyq_chips,cyq_perf,stk_factor`
+  - 特征严格门禁：`check_ods_features.py --fail-on-missing`（此步失败即整批失败）
+  - DWD -> DWS -> ADS 增量重建
+  - 全链路严格检查：`check_data_status.py --categories dwd,dws,ads --fail-on-stale`
+  - 数据完整性巡检：`inspect_data_completeness.py --days 5`
+- 目的：
+  - 对 17:00 结果做增强和严格校验，形成当日晚间可交付版本。
+
+#### 3. T+1 08:30 补全批次（两融优先）
+
+- 命令：
+  - `python scripts/sync/run_0830_pipeline.py --config config/etl.ini --token $TUSHARE_TOKEN`
+- 实际执行顺序（与脚本一致）：
+  - 先校验前置 ODS 主表是否存在当日数据：`ods_daily / ods_daily_basic / ods_adj_factor`
+  - 回补市场特征：`moneyflow,moneyflow_ths,cyq_perf,stk_factor` + 完整性检查
+  - 强制回补两融：`margin,margin_detail`（`--no-skip-existing`）
+  - 表级断言：`ods_margin / ods_margin_detail / ods_moneyflow / ods_cyq_perf`
+  - DWD 增量 + 断言：`dwd_margin_sentiment / dwd_chip_stability`
+  - DWS 专项：`run_dws.py --only-leverage-sentiment` + `run_dws_target_tables.py`
+  - ADS 增量
+  - 全链路检查：`check_data_status.py --categories dwd,dws,ads --fail-on-stale`
+- 目的：
+  - 完成 T+1 最后到达数据（尤其两融）的闭环修复，保证开盘前下游可用。
+
+#### 4. 失败补跑顺序（推荐）
+
+- 先看状态：
+  - `python scripts/check/check_pipeline_status.py --config config/etl.ini`
+  - `python scripts/check/check_data_status.py --config config/etl.ini`
+- 若存在长时间 `RUNNING` 僵死，先清理：
+  - `python scripts/check/cleanup_stale_tasks.py`
+- 按失败批次补跑，不跨级回滚：
+  - 17:00 失败 -> 只补 `run_1700_pipeline.py`
+  - 20:00 失败 -> 只补 `run_2000_pipeline.py`
+  - 08:30 失败 -> 只补 `run_0830_pipeline.py`
+- 仅在需要放宽“今日未齐”门禁时使用 `--lenient`；08:30 补全批次建议保持严格模式。
 
 ### 自动化调度 (Cron)
 建议在 `crontab` 中配置以下脚本：
@@ -289,7 +344,7 @@ npm run dev
 # 2. 20:00 Evening Enhancement (Dividend + Fina + Integrity Check)
 0 20 * * 1-5 cd /path/to/project && .venv/bin/python scripts/schedule/run_with_retry.py --retries 3 --delay 300 -- .venv/bin/python scripts/sync/run_2000_pipeline.py --config config/etl.ini --lenient >> logs/cron_2000.log 2>&1
 
-# 3. 08:30 T+1 Morning Completion (Margin-first)
+# 3. 08:30 T+1 Morning Completion (Margin-first, strict)
 30 8 * * 1-5 cd /path/to/project && .venv/bin/python scripts/schedule/run_with_retry.py --retries 1 --delay 60 -- .venv/bin/python scripts/sync/run_0830_pipeline.py --config config/etl.ini >> logs/cron_0830.log 2>&1
 ```
 
